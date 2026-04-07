@@ -1,0 +1,11 @@
+# ONYX Knowledgebase
+# Add facts, reference material, or context you want ONYX to always know.
+# Everything in this file is included in ONYX's context for every conversation.
+#
+# Examples:
+#   My home server runs Ubuntu 22.04 with 32GB RAM
+#   The project uses Python 3.12, FastAPI, and PostgreSQL
+#   Our team standup is at 9am EST Monday–Friday
+#   API docs are at https://internal.example.com/docs
+#
+# Lines starting with # are comments and will be ignored.

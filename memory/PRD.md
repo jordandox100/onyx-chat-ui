@@ -42,10 +42,17 @@ Build a local Linux desktop AI chat assistant called ONYX with:
 - [x] Claude Opus 4.6 integration (emergentintegrations library)
 - [x] Local Whisper speech-to-text (push-to-talk button)
 - [x] Text-to-Speech via pyttsx3 with UI toggle ("Voice Replies" checkbox)
-- [x] Local personality configuration file
 - [x] venv-based install script (setup.sh) with proper emergentintegrations install
 - [x] Desktop shortcut + launcher script
-- [x] Comprehensive test suite (51 pytest + 7 integration tests, 100% pass)
+- [x] Configuration folder with editable files:
+  - personality.txt — agent personality & tone
+  - knowledgebase.txt — persistent facts/context
+  - user.txt — user profile & preferences
+  - instructions.txt — custom rules for ONYX
+  - settings.json — app settings (TTS, model, voice, theme)
+- [x] System prompt assembled from all config files (personality + knowledgebase + user + instructions)
+- [x] Settings persistence (TTS state saved/loaded from settings.json)
+- [x] Comprehensive test suite (8/8 passing)
 
 ## Key Dependencies
 - PySide6 >= 6.8.0

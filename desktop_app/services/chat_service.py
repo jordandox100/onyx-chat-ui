@@ -19,15 +19,27 @@ class ChatService:
         if not self.api_key:
             logger.warning("CLAUDE_API_KEY not set in .env — AI chat will not work until a key is provided.")
 
-        self.personality = self.storage.get_personality()
+        # Build system message from all config files
+        system_message = self.storage.build_system_message()
 
         self.llm_chat = LlmChat(
             api_key=self.api_key,
             session_id="onyx_session",
-            system_message=self.personality
+            system_message=system_message,
         )
         self.llm_chat.with_model("anthropic", "claude-opus-4-6")
         logger.info("Chat service initialized with Claude Opus 4.6")
+
+    def reload_config(self):
+        """Reload system message from config files (call after user edits config)."""
+        system_message = self.storage.build_system_message()
+        self.llm_chat = LlmChat(
+            api_key=self.api_key,
+            session_id="onyx_session",
+            system_message=system_message,
+        )
+        self.llm_chat.with_model("anthropic", "claude-opus-4-6")
+        logger.info("Chat config reloaded")
 
     async def send_message(self, message: str, chat_id: int) -> str:
         """Send a message and get AI response"""

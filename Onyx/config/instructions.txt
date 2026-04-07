@@ -1,0 +1,13 @@
+# Custom Instructions
+# Rules and guidelines that ONYX must follow in every response.
+# These override default behaviour when they conflict.
+#
+# Examples:
+#   Always respond in British English
+#   When writing code, use type hints and docstrings
+#   Keep responses under 200 words unless I ask for detail
+#   Never suggest proprietary software — prefer open source
+#   Format lists with dashes, not bullets
+#   If I ask about my server, assume Ubuntu 22.04 unless I say otherwise
+#
+# Lines starting with # are comments and will be ignored.

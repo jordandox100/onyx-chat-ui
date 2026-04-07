@@ -108,7 +108,7 @@ class ChatWidget(QWidget):
         self.tts_checkbox = QCheckBox("Voice Replies")
         self.tts_checkbox.setObjectName("ttsToggle")
         self.tts_checkbox.setToolTip("Enable text-to-speech for AI responses")
-        self.tts_checkbox.setChecked(False)
+        self.tts_checkbox.setChecked(self.tts_service.enabled)
         self.tts_checkbox.stateChanged.connect(self._on_tts_toggled)
         self.tts_checkbox.setStyleSheet("""
             QCheckBox#ttsToggle {

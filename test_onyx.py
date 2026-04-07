@@ -113,6 +113,49 @@ def test_tts():
         return False
 
 
+def test_config_files():
+    """Test knowledgebase, user profile, instructions, and settings"""
+    print("\n=== Testing Config Files ===")
+    try:
+        from desktop_app.services.storage_service import StorageService
+        s = StorageService()
+        s.initialize()
+
+        # Check files exist
+        for f in ["knowledgebase.txt", "user.txt", "instructions.txt", "settings.json"]:
+            assert (s.config_path / f).exists(), f"{f} missing"
+            print(f"  [OK] {f} exists")
+
+        # Comment-only files return empty string (no content injected)
+        kb = s.get_knowledgebase()
+        assert isinstance(kb, str)
+        print(f"  [OK] knowledgebase: {len(kb)} chars (stripped)")
+
+        up = s.get_user_profile()
+        assert isinstance(up, str)
+        print(f"  [OK] user profile: {len(up)} chars (stripped)")
+
+        instr = s.get_instructions()
+        assert isinstance(instr, str)
+        print(f"  [OK] instructions: {len(instr)} chars (stripped)")
+
+        # Settings round-trip
+        settings = s.get_settings()
+        assert "tts" in settings
+        assert "model" in settings
+        print(f"  [OK] settings loaded: {list(settings.keys())}")
+
+        # System message assembly
+        msg = s.build_system_message()
+        assert "ONYX" in msg
+        print(f"  [OK] system message: {len(msg)} chars")
+
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
 def test_chat_service():
     """Test chat service initialisation (no API call)"""
     print("\n=== Testing Chat Service ===")
@@ -120,6 +163,10 @@ def test_chat_service():
         from desktop_app.services.chat_service import ChatService
         cs = ChatService()
         print(f"  [OK] Chat service init (model: Claude Opus 4.6)")
+
+        # Test reload_config
+        cs.reload_config()
+        print(f"  [OK] Config reload works")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -158,6 +205,7 @@ def main():
         ("Logger",           test_logger),
         ("Personality",      test_personality),
         ("TTS Service",      test_tts),
+        ("Config Files",     test_config_files),
         ("Chat Service",     test_chat_service),
     ]
 

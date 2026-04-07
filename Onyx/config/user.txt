@@ -1,0 +1,21 @@
+# User Profile
+# Tell ONYX who you are. This is included in every conversation
+# so the assistant can personalise responses.
+#
+# Name:
+#   (your name here)
+#
+# Role / Occupation:
+#   (e.g. software engineer, student, sysadmin)
+#
+# Location / Timezone:
+#   (e.g. EST, Berlin, UTC+9)
+#
+# Preferred Language:
+#   English
+#
+# Technical Level:
+#   (beginner / intermediate / advanced)
+#
+# Anything else ONYX should know about you:
+#   (hobbies, projects you're working on, communication preferences, etc.)
