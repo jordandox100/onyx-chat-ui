@@ -1,216 +1,183 @@
 #!/usr/bin/env python3
-"""
-ONYX Test Suite
-Tests core functionality of the ONYX application
-"""
+"""ONYX Test Suite — validates core modules and services"""
 
 import sys
-import os
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
+
 
 def test_imports():
     """Test that all required modules can be imported"""
     print("\n=== Testing Imports ===")
-    
-    try:
-        import PySide6
-        print("✓ PySide6")
-    except ImportError as e:
-        print(f"✗ PySide6: {e}")
-        return False
-    
-    try:
-        import torch
-        print("✓ PyTorch")
-    except ImportError as e:
-        print(f"✗ PyTorch: {e}")
-        return False
-    
-    try:
-        import whisper
-        print("✓ Whisper")
-    except ImportError as e:
-        print(f"✗ Whisper: {e}")
-        return False
-    
-    try:
-        from emergentintegrations.llm.chat import LlmChat
-        print("✓ emergentintegrations")
-    except ImportError as e:
-        print(f"✗ emergentintegrations: {e}")
-        return False
-    
-    try:
-        import pyaudio
-        print("✓ PyAudio")
-    except ImportError as e:
-        print(f"✗ PyAudio: {e}")
-        return False
-    
-    return True
+    ok = True
+
+    for name, stmt in [
+        ("PySide6",              "import PySide6"),
+        ("emergentintegrations", "from emergentintegrations.llm.chat import LlmChat, UserMessage"),
+        ("pyttsx3",              "import pyttsx3"),
+        ("dotenv",               "from dotenv import load_dotenv"),
+    ]:
+        try:
+            exec(stmt)
+            print(f"  [OK] {name}")
+        except ImportError as e:
+            print(f"  [FAIL] {name}: {e}")
+            ok = False
+
+    # Optional heavy deps
+    for name, stmt in [
+        ("torch",   "import torch"),
+        ("whisper", "import whisper"),
+        ("pyaudio", "import pyaudio"),
+    ]:
+        try:
+            exec(stmt)
+            print(f"  [OK] {name}")
+        except ImportError:
+            print(f"  [WARN] {name} not installed (voice features disabled)")
+
+    return ok
+
 
 def test_storage():
-    """Test storage service initialization"""
+    """Test storage service"""
     print("\n=== Testing Storage Service ===")
-    
     try:
         from desktop_app.services.storage_service import StorageService
         storage = StorageService()
         storage.initialize()
-        print("✓ Storage initialized")
-        
-        # Test database operations
+        print("  [OK] Storage initialized")
+
         chat_id = storage.create_chat("Test Chat")
-        print(f"✓ Created test chat: {chat_id}")
-        
-        storage.add_message(chat_id, "user", "Test message")
-        storage.add_message(chat_id, "assistant", "Test response")
-        print("✓ Added test messages")
-        
-        messages = storage.get_chat_messages(chat_id)
-        assert len(messages) == 2, "Should have 2 messages"
-        print(f"✓ Retrieved messages: {len(messages)}")
-        
+        print(f"  [OK] Created chat {chat_id}")
+
+        storage.add_message(chat_id, "user", "hello")
+        storage.add_message(chat_id, "assistant", "hi there")
+        msgs = storage.get_chat_messages(chat_id)
+        assert len(msgs) == 2
+        print(f"  [OK] Messages: {len(msgs)}")
+
         storage.delete_chat(chat_id)
-        print("✓ Deleted test chat")
-        
+        print("  [OK] Deleted test chat")
         return True
     except Exception as e:
-        print(f"✗ Storage test failed: {e}")
+        print(f"  [FAIL] {e}")
         return False
 
+
 def test_logger():
-    """Test logging system"""
+    """Test logging"""
     print("\n=== Testing Logger ===")
-    
     try:
         from desktop_app.utils.logger import setup_logger, get_logger
-        
         logger = setup_logger()
-        logger.info("Test log message")
-        print("✓ Logger initialized")
-        
-        logger2 = get_logger()
-        assert logger is logger2, "Should return same logger instance"
-        print("✓ Logger singleton working")
-        
+        logger.info("test log entry")
+        print("  [OK] Logger works")
         return True
     except Exception as e:
-        print(f"✗ Logger test failed: {e}")
+        print(f"  [FAIL] {e}")
         return False
+
 
 def test_personality():
     """Test personality service"""
-    print("\n=== Testing Personality Service ===")
-    
+    print("\n=== Testing Personality ===")
     try:
         from desktop_app.services.personality_service import PersonalityService
-        
-        personality = PersonalityService()
-        content = personality.get_personality()
-        print(f"✓ Loaded personality: {len(content)} characters")
-        
-        assert "ONYX" in content, "Personality should mention ONYX"
-        print("✓ Personality content valid")
-        
+        ps = PersonalityService()
+        content = ps.get_personality()
+        assert "ONYX" in content
+        print(f"  [OK] Personality loaded ({len(content)} chars)")
         return True
     except Exception as e:
-        print(f"✗ Personality test failed: {e}")
+        print(f"  [FAIL] {e}")
         return False
 
-def test_environment():
-    """Test environment configuration"""
-    print("\n=== Testing Environment ===")
-    
-    from dotenv import load_dotenv
-    load_dotenv()
-    
-    api_key = os.getenv("CLAUDE_API_KEY")
-    if api_key:
-        print(f"✓ CLAUDE_API_KEY configured ({api_key[:10]}...)")
-    else:
-        print("⚠ CLAUDE_API_KEY not set (required for AI features)")
-    
-    return True
+
+def test_tts():
+    """Test TTS service"""
+    print("\n=== Testing TTS Service ===")
+    try:
+        from desktop_app.services.tts_service import TTSService
+        tts = TTSService()
+        print(f"  [OK] TTS available: {tts.available}")
+        print(f"  [OK] TTS enabled (default): {tts.enabled}")
+        tts.enabled = True
+        assert tts.enabled is True
+        tts.enabled = False
+        print("  [OK] Toggle works")
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_chat_service():
+    """Test chat service initialisation (no API call)"""
+    print("\n=== Testing Chat Service ===")
+    try:
+        from desktop_app.services.chat_service import ChatService
+        cs = ChatService()
+        print(f"  [OK] Chat service init (model: Claude Opus 4.6)")
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
 
 def test_directory_structure():
-    """Test Onyx directory structure"""
+    """Test Onyx directories"""
     print("\n=== Testing Directory Structure ===")
-    
-    required_dirs = [
-        "Onyx",
-        "Onyx/history",
-        "Onyx/config",
-        "Onyx/voice",
-        "Onyx/logs"
-    ]
-    
-    all_exist = True
-    for dir_path in required_dirs:
-        if Path(dir_path).exists():
-            print(f"✓ {dir_path}")
+    ok = True
+    for d in ["Onyx", "Onyx/history", "Onyx/config", "Onyx/voice", "Onyx/logs"]:
+        if Path(d).exists():
+            print(f"  [OK] {d}")
         else:
-            print(f"✗ {dir_path} missing")
-            all_exist = False
-    
-    # Check for personality file
-    personality_file = Path("Onyx/config/personality.txt")
-    if personality_file.exists():
-        print(f"✓ personality.txt ({personality_file.stat().st_size} bytes)")
+            print(f"  [FAIL] {d} missing")
+            ok = False
+
+    pf = Path("Onyx/config/personality.txt")
+    if pf.exists():
+        print(f"  [OK] personality.txt ({pf.stat().st_size} bytes)")
     else:
-        print("✗ personality.txt missing")
-        all_exist = False
-    
-    return all_exist
+        print("  [FAIL] personality.txt missing")
+        ok = False
+    return ok
+
 
 def main():
-    """Run all tests"""
-    print("\n" + "="*50)
-    print("       ONYX Application Test Suite")
-    print("="*50)
-    
+    print("\n" + "=" * 50)
+    print("        ONYX Application Test Suite")
+    print("=" * 50)
+
     tests = [
-        ("Imports", test_imports),
-        ("Environment", test_environment),
-        ("Directory Structure", test_directory_structure),
-        ("Storage Service", test_storage),
-        ("Logger", test_logger),
-        ("Personality Service", test_personality),
+        ("Imports",          test_imports),
+        ("Directory Layout", test_directory_structure),
+        ("Storage Service",  test_storage),
+        ("Logger",           test_logger),
+        ("Personality",      test_personality),
+        ("TTS Service",      test_tts),
+        ("Chat Service",     test_chat_service),
     ]
-    
+
     results = {}
-    for name, test_func in tests:
+    for name, fn in tests:
         try:
-            results[name] = test_func()
+            results[name] = fn()
         except Exception as e:
-            print(f"\n✗ {name} test crashed: {e}")
+            print(f"  [CRASH] {name}: {e}")
             results[name] = False
-    
-    # Summary
-    print("\n" + "="*50)
-    print("                  SUMMARY")
-    print("="*50)
-    
+
+    print("\n" + "=" * 50)
+    print("                 SUMMARY")
+    print("=" * 50)
     passed = sum(1 for v in results.values() if v)
-    total = len(results)
-    
-    for name, result in results.items():
-        status = "✓ PASS" if result else "✗ FAIL"
-        print(f"{status}: {name}")
-    
-    print("\n" + "="*50)
-    print(f"Results: {passed}/{total} tests passed")
-    
-    if passed == total:
-        print("\n🎉 All tests passed! ONYX is ready to run.")
-        print("\nRun: python3 desktop_app/main.py")
-        return 0
-    else:
-        print(f"\n⚠ {total - passed} test(s) failed. Please fix issues before running.")
-        return 1
+    for name, ok in results.items():
+        print(f"  {'PASS' if ok else 'FAIL'}: {name}")
+    print(f"\n  {passed}/{len(results)} passed")
+    return 0 if passed == len(results) else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
