@@ -160,7 +160,7 @@ rm -rf /app/desktop_app
 rm -rf /app/Onyx
 
 # Remove Python packages (optional)
-pip3 uninstall -y PySide6 openai-whisper torch torchaudio PyAudio emergentintegrations
+pip3 uninstall -y PySide6 openai-whisper torch torchaudio PyAudio anthropic piper-tts
 ```
 
 ## Distribution-Specific Notes

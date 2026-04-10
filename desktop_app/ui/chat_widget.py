@@ -1,4 +1,4 @@
-"""Chat widget — messages, streaming, model selector, attachments, tools"""
+"""Chat widget — messages, streaming, model selector, voice picker, attachments"""
 import asyncio
 import os
 from pathlib import Path
@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QFrame, QCheckBox, QComboBox, QFileDialog,
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer
-from PySide6.QtGui import QTextCursor, QColor
+from PySide6.QtGui import QTextCursor, QKeyEvent
 
 from desktop_app.services.chat_service import ChatService, ANTHROPIC_MODELS
 from desktop_app.services.voice_service import VoiceService, WakeWordThread, VOICE_AVAILABLE
@@ -24,13 +24,28 @@ from desktop_app.utils.logger import get_logger
 
 logger = get_logger()
 
-STREAM_MS = 25          # ms per tick
-STREAM_CHARS = 4        # chars per tick
+STREAM_MS = 25
+STREAM_CHARS = 4
+
+
+# ── Custom input that sends on Enter, newline on Shift+Enter ──
+
+class MessageInput(QTextEdit):
+    submit = Signal()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                super().keyPressEvent(event)
+            else:
+                self.submit.emit()
+        else:
+            super().keyPressEvent(event)
 
 
 class ChatThread(QThread):
     """Background thread for LLM calls + tool execution."""
-    tool_output = Signal(str, str, str)   # type, cmd, result
+    tool_output = Signal(str, str, str)
     response_ready = Signal(str)
     error_occurred = Signal(str)
 
@@ -100,6 +115,8 @@ class ChatWidget(QWidget):
         self.voice_thread = None
         self.wake_thread = None
         self._attached_files: list[dict] = []
+        self._is_first_message = False
+        self._loading_settings = False
 
         # Streaming state
         self._stream_text = ""
@@ -133,10 +150,12 @@ class ChatWidget(QWidget):
         for display, _ in ANTHROPIC_MODELS:
             self.model_combo.addItem(display)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
-        top_lay.addWidget(QLabel("Model"))
+        model_label = QLabel("Model")
+        model_label.setStyleSheet(f"color:{TEXT_SEC}; font-size:12px;")
+        top_lay.addWidget(model_label)
         top_lay.addWidget(self.model_combo)
 
-        top_lay.addSpacing(16)
+        top_lay.addSpacing(12)
 
         # TTS toggle
         self.tts_check = QCheckBox("TTS")
@@ -144,8 +163,22 @@ class ChatWidget(QWidget):
         self.tts_check.stateChanged.connect(self._on_tts_toggled)
         if not self.tts_service.available:
             self.tts_check.setEnabled(False)
-            self.tts_check.setToolTip("Install espeak-ng + pyttsx3")
+            self.tts_check.setToolTip("No TTS voices found")
         top_lay.addWidget(self.tts_check)
+
+        top_lay.addSpacing(4)
+
+        # Voice selector
+        self.voice_combo = QComboBox()
+        voices = self.tts_service.available_voices
+        for name, _, _ in voices:
+            self.voice_combo.addItem(name)
+        self.voice_combo.currentIndexChanged.connect(self._on_voice_changed)
+        if not voices:
+            self.voice_combo.setEnabled(False)
+        top_lay.addWidget(self.voice_combo)
+
+        top_lay.addSpacing(12)
 
         # Wake word toggle
         self.ww_check = QCheckBox("Wake")
@@ -204,9 +237,9 @@ class ChatWidget(QWidget):
         self.attach_btn.clicked.connect(self._pick_file)
         inp_lay.addWidget(self.attach_btn)
 
-        # Message input
-        self.msg_input = QTextEdit()
-        self.msg_input.setPlaceholderText("Message ONYX...")
+        # Message input (custom — Enter sends, Shift+Enter newline)
+        self.msg_input = MessageInput()
+        self.msg_input.setPlaceholderText("Message ONYX...  (Enter to send, Shift+Enter for new line)")
         self.msg_input.setMaximumHeight(100)
         self.msg_input.setStyleSheet(f"""
             QTextEdit {{
@@ -219,6 +252,7 @@ class ChatWidget(QWidget):
             }}
             QTextEdit:focus {{ border-color: {ACCENT}; }}
         """)
+        self.msg_input.submit.connect(self.send_message)
         inp_lay.addWidget(self.msg_input, stretch=1)
 
         # Voice button
@@ -241,21 +275,43 @@ class ChatWidget(QWidget):
     # ── Settings persistence ─────────────────────────────────
 
     def _load_settings(self):
+        self._loading_settings = True
         s = self.storage.get_settings()
+
+        # Model
         model = s.get("model", {}).get("name", "claude-sonnet-4-6")
         for i, (_, mid) in enumerate(ANTHROPIC_MODELS):
             if mid == model:
                 self.model_combo.setCurrentIndex(i)
                 break
+
+        # TTS
         self.tts_check.setChecked(s.get("tts", {}).get("enabled", False))
 
+        # Voice
+        voice_idx = s.get("tts", {}).get("voice_idx", 0)
+        voices = self.tts_service.available_voices
+        if 0 <= voice_idx < len(voices):
+            self.voice_combo.setCurrentIndex(voice_idx)
+
+        self._loading_settings = False
+
     def _on_model_changed(self, idx):
+        if self._loading_settings:
+            return
         if 0 <= idx < len(ANTHROPIC_MODELS):
             _, model_id = ANTHROPIC_MODELS[idx]
             self.chat_service.set_model(model_id)
 
     def _on_tts_toggled(self, state):
+        if self._loading_settings:
+            return
         self.tts_service.enabled = bool(state)
+
+    def _on_voice_changed(self, idx):
+        if self._loading_settings:
+            return
+        self.tts_service.voice_index = idx
 
     def _on_wake_toggled(self, state):
         if state and VOICE_AVAILABLE:
@@ -274,6 +330,7 @@ class ChatWidget(QWidget):
 
     def load_chat(self, chat_id, messages):
         self.chat_id = chat_id
+        self._is_first_message = False
         self.chat_service.switch_chat(chat_id)
         self.chat_display.clear()
         for m in messages:
@@ -312,12 +369,10 @@ class ChatWidget(QWidget):
         self._scroll()
 
     def _remove_typing(self):
-        """Remove the last 'thinking...' indicator."""
         doc = self.chat_display.document()
         cursor = QTextCursor(doc)
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
-        # Walk back to find the typing div
         for _ in range(10):
             sel = cursor.selectedText()
             if "thinking" in sel.lower():
@@ -333,7 +388,6 @@ class ChatWidget(QWidget):
         self._stream_text = full_text
         self._stream_pos = 0
 
-        # Insert ONYX header
         self.chat_display.append(
             f'<div style="margin:8px 120px 0 0; padding:12px 16px;'
             f' background-color:{AGENT_BG}; border-left:3px solid {ACCENT};'
@@ -356,7 +410,6 @@ class ChatWidget(QWidget):
 
         if self._stream_pos >= len(self._stream_text):
             self._stream_timer.stop()
-            # Close the div
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.insertHtml("</div>")
             self._on_stream_done()
@@ -376,10 +429,16 @@ class ChatWidget(QWidget):
             return
 
         if not self.chat_id:
-            self.chat_id = self.storage.create_chat(text[:50] or "Attachment")
+            title = text[:50] or "Attachment"
+            self.chat_id = self.storage.create_chat(title)
+            self._is_first_message = True
+            self.request_refresh_sidebar.emit()
+        elif self._is_first_message:
+            # Auto-rename the chat from "New Chat" to first real message
+            self.storage.update_chat_title(self.chat_id, text[:50])
+            self._is_first_message = False
             self.request_refresh_sidebar.emit()
 
-        # Build message with attachments
         full_msg = self._build_message_with_attachments(text)
 
         self._show_user_msg(text)

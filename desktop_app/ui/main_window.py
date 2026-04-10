@@ -201,6 +201,7 @@ class MainWindow(QMainWindow):
         self.load_chats()
         self.chat_widget.clear_chat()
         self.chat_widget.set_chat_id(cid)
+        self.chat_widget._is_first_message = True
 
     def load_selected_chat(self, item):
         cid = item.data(Qt.ItemDataRole.UserRole)

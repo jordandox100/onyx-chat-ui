@@ -104,18 +104,41 @@ pip install --upgrade pip --quiet
 print_step "Installing Python packages (this may take a few minutes)"
 cd "$INSTALL_DIR"
 
-# Install emergentintegrations from private index
-pip install emergentintegrations \
-    --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
-    --quiet 2>&1 | tail -2
-print_ok "emergentintegrations"
-
-# Install the rest from requirements.txt (skip emergentintegrations line)
-grep -v '^emergentintegrations' requirements.txt | pip install -r /dev/stdin \
-    --quiet 2>&1 | tail -2
+pip install -r requirements.txt --quiet 2>&1 | tail -2
 print_ok "All Python packages installed"
 
-# ── 5. Initialise ONYX data folders ─────────────────────────
+# ── 5. Download TTS voice models ─────────────────────────────
+print_step "Downloading TTS voice models"
+VOICES_DIR="$INSTALL_DIR/Onyx/voices"
+mkdir -p "$VOICES_DIR"
+
+HF_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main"
+
+download_voice() {
+    local lang="$1"   # e.g. en/en_GB
+    local name="$2"   # e.g. alan
+    local quality="$3" # e.g. medium
+    local prefix="${lang##*/}-${name}-${quality}"
+    local remote_dir="${lang}/${name}/${quality}"
+
+    if [ -f "$VOICES_DIR/${prefix}.onnx" ]; then
+        print_ok "Voice: ${prefix} (cached)"
+        return
+    fi
+    curl -sL "$HF_BASE/${remote_dir}/${prefix}.onnx" -o "$VOICES_DIR/${prefix}.onnx"
+    curl -sL "$HF_BASE/${remote_dir}/${prefix}.onnx.json" -o "$VOICES_DIR/${prefix}.onnx.json"
+    print_ok "Voice: ${prefix}"
+}
+
+download_voice "en/en_GB" "alan"                  "medium"
+download_voice "en/en_GB" "northern_english_male"  "medium"
+download_voice "en/en_GB" "semaine"                "medium"
+download_voice "en/en_GB" "aru"                    "medium"
+download_voice "en/en_US" "ryan"                   "medium"
+
+print_ok "TTS voices ready"
+
+# ── 6. Initialise ONYX data folders ─────────────────────────
 print_step "Initialising ONYX data structure"
 python3 -c "
 from desktop_app.services.storage_service import StorageService
@@ -125,7 +148,7 @@ print('  Data directories and database ready')
 "
 print_ok "ONYX data structure"
 
-# ── 6. Create .env if missing ────────────────────────────────
+# ── 7. Create .env if missing ────────────────────────────────
 print_step "Checking .env configuration"
 ENV_FILE="$INSTALL_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
@@ -135,7 +158,7 @@ else
     print_ok ".env already exists"
 fi
 
-# ── 7. Create launcher script ────────────────────────────────
+# ── 8. Create launcher script ────────────────────────────────
 print_step "Creating launcher"
 LAUNCHER="$INSTALL_DIR/launch_onyx.sh"
 
@@ -157,7 +180,6 @@ fi
 if ! grep -q "CLAUDE_API_KEY=." .env; then
     zenity --info --text="Add your Claude API key to .env first.\n\n1. Get key: https://console.anthropic.com/\n2. Edit: $SCRIPT_DIR/.env\n3. Set CLAUDE_API_KEY=sk-..." --width=500 2>/dev/null || \
         echo "Please set CLAUDE_API_KEY in .env"
-    # Open .env in default editor
     command -v xdg-open &>/dev/null && xdg-open ".env" &
     exit 1
 fi
@@ -168,7 +190,7 @@ LAUNCHER_SCRIPT
 chmod +x "$LAUNCHER"
 print_ok "Launcher: $LAUNCHER"
 
-# ── 8. Desktop entry + shortcut ──────────────────────────────
+# ── 9. Desktop entry + shortcut ──────────────────────────────
 print_step "Creating desktop entry"
 ICON_PATH="$INSTALL_DIR/install/onyx_icon.png"
 DESKTOP_FILE="$HOME/.local/share/applications/onyx.desktop"
@@ -202,16 +224,16 @@ fi
 command -v update-desktop-database &>/dev/null && \
     update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 
-# ── 9. Quick validation ──────────────────────────────────────
+# ── 10. Quick validation ─────────────────────────────────────
 print_step "Validating installation"
 python3 -c "
 import sys
 ok = True
 checks = [
-    ('PySide6',              'import PySide6'),
-    ('emergentintegrations', 'from emergentintegrations.llm.chat import LlmChat'),
-    ('pyttsx3 (TTS)',        'import pyttsx3'),
-    ('dotenv',               'import dotenv'),
+    ('PySide6',            'import PySide6'),
+    ('anthropic SDK',      'import anthropic'),
+    ('piper-tts',          'from piper import PiperVoice'),
+    ('dotenv',             'import dotenv'),
 ]
 for name, stmt in checks:
     try:
@@ -221,7 +243,6 @@ for name, stmt in checks:
         print(f'  [FAIL] {name}: {e}')
         ok = False
 
-# Optional heavy deps (Whisper/Torch)
 for name, stmt in [('torch', 'import torch'), ('whisper', 'import whisper'), ('pyaudio', 'import pyaudio')]:
     try:
         exec(stmt)

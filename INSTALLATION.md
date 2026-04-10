@@ -86,7 +86,7 @@ The installer creates a futuristic robot icon:
 ### Python Packages Installed
 
 - **PySide6** - Qt GUI framework
-- **emergentintegrations** - Claude AI (Opus 4.6)
+- **anthropic** - Claude AI (Opus 4.6)
 - **torch + torchaudio** - PyTorch (~2GB)
 - **openai-whisper** - Local voice recognition
 - **PyAudio** - Microphone input

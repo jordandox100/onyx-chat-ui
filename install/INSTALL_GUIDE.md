@@ -145,7 +145,7 @@ After installation:
 - **torch** - PyTorch (~2GB)
 - **torchaudio** - Audio processing
 - **openai-whisper** - Voice-to-text
-- **emergentintegrations** - Claude AI
+- **anthropic** - Claude AI SDK
 - **PyAudio** - Microphone input
 - **python-dotenv** - Configuration
 
@@ -169,7 +169,7 @@ After installation:
 2. Window opens with sidebar
 3. Click **"+ New Chat"**
 4. Type message and press **Send**
-5. AI responds using **Claude Opus 4.6**
+5. AI responds using **Claude Sonnet 4.6** (default, switchable)
 
 ### Voice Input
 
@@ -348,7 +348,7 @@ rm -rf /app/install
 rm -rf /app/Onyx
 
 # Remove Python packages (optional)
-pip3 uninstall -y PySide6 openai-whisper torch torchaudio PyAudio emergentintegrations
+pip3 uninstall -y PySide6 openai-whisper torch torchaudio PyAudio anthropic piper-tts
 ```
 
 ### Keep Your Data

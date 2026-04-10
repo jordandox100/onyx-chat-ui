@@ -91,7 +91,7 @@ pip install -r requirements.txt
 
 **Requirements:**
 - PySide6 (Qt GUI framework)
-- emergentintegrations (AI integration)
+- anthropic (AI integration)
 - python-dotenv (Environment variables)
 - openai-whisper (Local speech-to-text)
 - torch, torchaudio (Whisper dependencies)
@@ -183,7 +183,7 @@ Your personality:
 ### Technology Stack
 
 - **GUI Framework**: PySide6 (Qt for Python)
-- **AI Model**: Claude Opus 4.6 via emergentintegrations
+- **AI Model**: Claude Opus 4.6 via anthropic
 - **Database**: SQLite3
 - **Voice-to-Text**: OpenAI Whisper (local)
 - **Audio**: PyAudio + PortAudio
@@ -460,7 +460,7 @@ MIT License - see LICENSE file
 - **AI**: Anthropic Claude Opus 4.6
 - **Speech**: OpenAI Whisper
 - **GUI**: Qt Project (PySide6)
-- **Integration**: emergentintegrations library
+- **Integration**: anthropic library
 
 ## Support
 

@@ -85,7 +85,7 @@ python3 -c "
 import PySide6
 import whisper
 import torch
-from emergentintegrations.llm.chat import LlmChat
+from anthropic.llm.chat import LlmChat
 print('✓ All dependencies loaded successfully')
 "
 
@@ -268,7 +268,7 @@ rm -rf /app/Onyx
 rm ~/.local/share/applications/onyx.desktop
 
 # Uninstall Python packages
-pip uninstall -y PySide6 openai-whisper torch torchaudio PyAudio emergentintegrations
+pip uninstall -y PySide6 openai-whisper torch torchaudio PyAudio anthropic
 ```
 
 ## Next Steps

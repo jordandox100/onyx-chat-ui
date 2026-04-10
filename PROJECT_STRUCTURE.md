@@ -169,7 +169,7 @@ CREATE TABLE messages (
 
 ### Python Packages
 - **PySide6**: Qt GUI framework
-- **emergentintegrations**: AI integration library
+- **anthropic**: AI integration library
 - **openai-whisper**: Speech-to-text
 - **torch/torchaudio**: Whisper dependencies
 - **PyAudio**: Audio recording
