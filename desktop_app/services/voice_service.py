@@ -2,13 +2,11 @@
 import os
 import wave
 import time
-import threading
 from pathlib import Path
 
 try:
     import pyaudio
     import whisper
-    import numpy as np
     VOICE_AVAILABLE = True
 except ImportError:
     VOICE_AVAILABLE = False

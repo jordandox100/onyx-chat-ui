@@ -125,7 +125,7 @@ class ChatService:
                     on_tool_output(c["type"], c.get("content", ""), result)
 
             followup = UserMessage(
-                text=f"[Tool results]\n{''.join(results)}\n\nContinue based on these results."
+                text="[Tool results]\n" + "\n\n".join(results) + "\n\nContinue based on these results."
             )
             response = await self.llm_chat.send_message(followup)
 

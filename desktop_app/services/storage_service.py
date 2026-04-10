@@ -2,7 +2,6 @@
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime
 from typing import List, Dict, Optional
 
 from desktop_app.utils.logger import get_logger
