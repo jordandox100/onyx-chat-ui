@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 import sys
-import os
-import asyncio
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
 from dotenv import load_dotenv
 
 # Add project root to path

@@ -2,69 +2,82 @@
 
 ## Problem Statement
 Build a local Linux desktop AI chat assistant called ONYX with:
-- PySide6 dark modern UI (ChatGPT-like)
-- Local SQLite database for chat history
+- PySide6 dark modern UI (sleek, cyber-tech aesthetic)
+- Local SQLite database for chat history with context continuity
 - Local folder structure (Onyx/history, config, voice, logs)
-- Claude Opus 4.6 for AI responses (via emergentintegrations)
-- Local Whisper for speech-to-text
-- Text-to-Speech for AI responses (toggleable in UI)
-- One-click install script using venv
+- Claude Sonnet 4.6 default (switchable to any Anthropic model)
+- Local Whisper for speech-to-text + wake word "Onyx"
+- Text-to-Speech with UI toggle
+- Tool use: shell commands, file read/write, directory listing
+- Streaming responses (typed out word-by-word)
+- File attachments
+- System tray + compact mode toggle
 
 ## Architecture
 ```
 /app/
 ├── desktop_app/
-│   ├── main.py                  # Entry point
+│   ├── main.py                    # Entry point
 │   ├── ui/
-│   │   ├── main_window.py       # Main window + sidebar
-│   │   ├── chat_widget.py       # Chat area + TTS toggle
-│   │   └── styles.py            # Dark theme QSS
+│   │   ├── main_window.py         # Main window + sidebar + tray + compact toggle
+│   │   ├── chat_widget.py         # Chat + streaming + model dropdown + attachments
+│   │   └── styles.py              # Dark theme + HTML message templates
 │   └── services/
-│       ├── storage_service.py   # SQLite CRUD
-│       ├── chat_service.py      # Claude Opus 4.6 via emergentintegrations
-│       ├── voice_service.py     # Whisper STT (push-to-talk)
-│       ├── tts_service.py       # pyttsx3 text-to-speech
+│       ├── storage_service.py     # SQLite CRUD + config file management
+│       ├── chat_service.py        # Claude via emergentintegrations + history + tools
+│       ├── tool_service.py        # Shell/file/dir tools for ONYX
+│       ├── voice_service.py       # Whisper STT + wake word thread
+│       ├── tts_service.py         # pyttsx3 TTS with settings persistence
 │       └── personality_service.py
-├── Onyx/                        # Local data
-│   ├── config/personality.txt
-│   ├── history/chats.db
-│   ├── logs/
-│   └── voice/
+├── Onyx/config/
+│   ├── personality.txt            # Agent personality
+│   ├── knowledgebase.txt          # Persistent facts
+│   ├── user.txt                   # User profile
+│   ├── instructions.txt           # Custom rules
+│   └── settings.json              # App settings (model, TTS, etc.)
 ├── install/
-│   └── setup.sh                 # Venv-based installer
+│   ├── setup.sh                   # Venv-based installer
+│   ├── onyx_icon.svg              # Futuristic robot icon
+│   └── onyx_icon.png
 ├── requirements.txt
-└── .env                         # CLAUDE_API_KEY= (user fills in)
+└── .env                           # CLAUDE_API_KEY= (user fills in)
 ```
 
 ## What's Implemented (Feb 2026)
-- [x] PySide6 dark modern UI with sidebar chat management
-- [x] SQLite storage (chats + messages CRUD)
-- [x] Claude Opus 4.6 integration (emergentintegrations library)
-- [x] Local Whisper speech-to-text (push-to-talk button)
-- [x] Text-to-Speech via pyttsx3 with UI toggle ("Voice Replies" checkbox)
-- [x] venv-based install script (setup.sh) with proper emergentintegrations install
-- [x] Desktop shortcut + launcher script
-- [x] Configuration folder with editable files:
-  - personality.txt — agent personality & tone
-  - knowledgebase.txt — persistent facts/context
-  - user.txt — user profile & preferences
-  - instructions.txt — custom rules for ONYX
-  - settings.json — app settings (TTS, model, voice, theme)
-- [x] System prompt assembled from all config files (personality + knowledgebase + user + instructions)
-- [x] Settings persistence (TTS state saved/loaded from settings.json)
-- [x] Comprehensive test suite (8/8 passing)
+- [x] PySide6 dark UI with cyber-tech color scheme (electric cyan accent)
+- [x] SQLite storage with full CRUD
+- [x] Chat history context — old chats resume with full context injection
+- [x] Model dropdown: 9 Anthropic models (Sonnet 4.6 default)
+- [x] Streaming responses (word-by-word typing effect via QTimer)
+- [x] Tool use: shell commands, file read/write, directory listing
+- [x] File attachments via file picker (text content inlined)
+- [x] System tray icon with minimize-to-tray on close
+- [x] Compact mode toggle (arrow hides/shows sidebar)
+- [x] Text-to-Speech via pyttsx3 with UI toggle + settings persistence
+- [x] Voice-to-text via local Whisper (push-to-talk)
+- [x] Wake word "Onyx" background listener via Whisper
+- [x] Configuration system: personality, knowledgebase, user profile, instructions, settings
+- [x] Futuristic humanoid robot SVG/PNG icon
+- [x] Venv-based install script with proper emergentintegrations install
+- [x] Distinct user (blue) vs agent (cyan border) message styling
+- [x] Tool output display (green border, monospace)
+- [x] 119 pytest tests + 9 integration tests, 100% pass rate
 
 ## Key Dependencies
 - PySide6 >= 6.8.0
-- emergentintegrations (via --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/)
-- pyttsx3 (uses espeak-ng on Linux)
+- emergentintegrations (--extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/)
+- pyttsx3 (espeak-ng on Linux)
 - openai-whisper, torch, pyaudio
 
 ## Configuration
-- `.env`: Set `CLAUDE_API_KEY=sk-ant-...` to enable AI chat
-- `Onyx/config/personality.txt`: Edit to customise ONYX's personality
+- `.env`: Set `CLAUDE_API_KEY=sk-ant-...`
+- `Onyx/config/personality.txt`: Agent personality
+- `Onyx/config/knowledgebase.txt`: Facts ONYX should always know
+- `Onyx/config/user.txt`: User profile
+- `Onyx/config/instructions.txt`: Custom rules
+- `Onyx/config/settings.json`: App settings
 
 ## Backlog
-- P1: Wake word "Onyx" — continuous background listening via Whisper (needs careful threading to avoid UI freeze)
-- P2: TTS voice selection in UI settings
+- P2: TTS voice selection UI
 - P2: Conversation export/import
+- P3: Drag-and-drop file attachments
