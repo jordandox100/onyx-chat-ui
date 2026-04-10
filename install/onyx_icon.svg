@@ -1,97 +1,74 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background with gradient -->
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0a0a0a;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1a1a2e;stop-opacity:1" />
-    </linearGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" style="stop-color:#4a9eff;stop-opacity:0.3" />
-      <stop offset="100%" style="stop-color:#4a9eff;stop-opacity:0" />
+    <radialGradient id="glow" cx="50%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#00d4ff" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#080b10" stop-opacity="0"/>
     </radialGradient>
+    <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a2233"/>
+      <stop offset="100%" stop-color="#0c1017"/>
+    </linearGradient>
   </defs>
-  
+
   <!-- Background -->
-  <rect width="512" height="512" rx="80" fill="url(#bgGrad)"/>
-  
-  <!-- Outer glow -->
-  <circle cx="256" cy="256" r="200" fill="url(#glow)"/>
-  
-  <!-- Robot head -->
-  <rect x="176" y="176" width="160" height="160" rx="24" 
-        fill="#16213e" stroke="#4a9eff" stroke-width="5"/>
-  
-  <!-- Head detail lines -->
-  <line x1="186" y1="196" x2="326" y2="196" stroke="#2a4a6e" stroke-width="2"/>
-  <line x1="186" y1="316" x2="326" y2="316" stroke="#2a4a6e" stroke-width="2"/>
-  
-  <!-- Antenna -->
-  <line x1="256" y1="176" x2="256" y2="130" stroke="#4a9eff" stroke-width="4"/>
-  <circle cx="256" cy="130" r="10" fill="#4a9eff">
-    <animate attributeName="opacity" values="1;0.4;1" dur="1.5s" repeatCount="indefinite"/>
-    <animate attributeName="r" values="10;14;10" dur="1.5s" repeatCount="indefinite"/>
-  </circle>
-  
-  <!-- Left antenna side -->
-  <line x1="210" y1="176" x2="210" y2="150" stroke="#4a9eff" stroke-width="3"/>
-  <circle cx="210" cy="150" r="6" fill="#4a9eff">
-    <animate attributeName="opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite"/>
-  </circle>
-  
-  <!-- Right antenna side -->
-  <line x1="302" y1="176" x2="302" y2="150" stroke="#4a9eff" stroke-width="3"/>
-  <circle cx="302" cy="150" r="6" fill="#4a9eff">
-    <animate attributeName="opacity" values="0.6;1;0.6" dur="2s" begin="0.5s" repeatCount="indefinite"/>
-  </circle>
-  
-  <!-- Eyes -->
-  <circle cx="220" cy="235" r="18" fill="#0f3460" stroke="#4a9eff" stroke-width="3"/>
-  <circle cx="220" cy="235" r="10" fill="#4a9eff">
-    <animate attributeName="opacity" values="1;0.2;1" dur="3s" repeatCount="indefinite"/>
-  </circle>
-  
-  <circle cx="292" cy="235" r="18" fill="#0f3460" stroke="#4a9eff" stroke-width="3"/>
-  <circle cx="292" cy="235" r="10" fill="#4a9eff">
-    <animate attributeName="opacity" values="1;0.2;1" dur="3s" repeatCount="indefinite"/>
-  </circle>
-  
-  <!-- Eye pupils -->
-  <circle cx="222" cy="233" r="4" fill="#ffffff">
-    <animate attributeName="opacity" values="0.8;0;0.8" dur="3s" repeatCount="indefinite"/>
-  </circle>
-  <circle cx="294" cy="233" r="4" fill="#ffffff">
-    <animate attributeName="opacity" values="0.8;0;0.8" dur="3s" repeatCount="indefinite"/>
-  </circle>
-  
-  <!-- Nose/sensor -->
-  <rect x="248" y="255" width="16" height="8" rx="4" fill="#4a9eff" opacity="0.6"/>
-  
-  <!-- Mouth/speaker grill -->
-  <rect x="206" y="285" width="100" height="35" rx="18" 
-        fill="#0f3460" stroke="#4a9eff" stroke-width="3"/>
-  
-  <!-- Speaker lines -->
-  <line x1="220" y1="292" x2="220" y2="313" stroke="#4a9eff" stroke-width="2.5" opacity="0.8"/>
-  <line x1="235" y1="292" x2="235" y2="313" stroke="#4a9eff" stroke-width="2.5" opacity="0.8"/>
-  <line x1="250" y1="292" x2="250" y2="313" stroke="#4a9eff" stroke-width="2.5" opacity="0.8"/>
-  <line x1="265" y1="292" x2="265" y2="313" stroke="#4a9eff" stroke-width="2.5" opacity="0.8"/>
-  <line x1="280" y1="292" x2="280" y2="313" stroke="#4a9eff" stroke-width="2.5" opacity="0.8"/>
-  <line x1="292" y1="292" x2="292" y2="313" stroke="#4a9eff" stroke-width="2.5" opacity="0.8"/>
-  
-  <!-- Neck connector -->
-  <rect x="236" y="336" width="40" height="20" fill="#16213e" stroke="#4a9eff" stroke-width="3"/>
-  <rect x="242" y="342" width="28" height="8" fill="#0f3460"/>
-  
-  <!-- Side panels -->
-  <rect x="176" y="220" width="12" height="40" rx="6" fill="#0f3460" stroke="#4a9eff" stroke-width="2"/>
-  <rect x="324" y="220" width="12" height="40" rx="6" fill="#0f3460" stroke="#4a9eff" stroke-width="2"/>
-  
-  <!-- Text -->
-  <text x="256" y="415" font-family="Arial, Helvetica, sans-serif" font-size="52" 
-        font-weight="bold" fill="#4a9eff" text-anchor="middle" letter-spacing="4">ONYX</text>
-  
-  <!-- Subtitle -->
-  <text x="256" y="445" font-family="Arial, Helvetica, sans-serif" font-size="18" 
-        font-weight="normal" fill="#6ab9ff" text-anchor="middle" opacity="0.8">AI ASSISTANT</text>
+  <rect width="512" height="512" rx="96" fill="#080b10"/>
+
+  <!-- Ambient glow -->
+  <circle cx="256" cy="220" r="200" fill="url(#glow)"/>
+
+  <!-- Neck -->
+  <rect x="230" y="310" width="52" height="40" rx="4" fill="#121822"/>
+  <rect x="238" y="320" width="36" height="8" rx="2" fill="#1a2233"/>
+
+  <!-- Shoulders -->
+  <path d="M 180 350 Q 180 335 210 330 L 302 330 Q 332 335 332 350 L 332 380 Q 332 395 310 395 L 202 395 Q 180 395 180 380 Z" fill="url(#bodyGrad)" stroke="#1c2638" stroke-width="1.5"/>
+  <line x1="200" y1="345" x2="200" y2="385" stroke="#1c2638" stroke-width="1"/>
+  <line x1="312" y1="345" x2="312" y2="385" stroke="#1c2638" stroke-width="1"/>
+
+  <!-- Head — sleek rounded shape -->
+  <path d="M 176 200 Q 176 120 256 110 Q 336 120 336 200 L 336 270 Q 336 310 300 315 L 212 315 Q 176 310 176 270 Z"
+        fill="url(#bodyGrad)" stroke="#1c2638" stroke-width="2"/>
+
+  <!-- Forehead panel line -->
+  <path d="M 200 155 Q 256 140 312 155" fill="none" stroke="#1c2638" stroke-width="1.5"/>
+
+  <!-- Cheek panels -->
+  <line x1="185" y1="220" x2="185" y2="270" stroke="#1c2638" stroke-width="1" opacity="0.6"/>
+  <line x1="327" y1="220" x2="327" y2="270" stroke="#1c2638" stroke-width="1" opacity="0.6"/>
+
+  <!-- Eye sockets -->
+  <ellipse cx="218" cy="215" rx="28" ry="18" fill="#080b10"/>
+  <ellipse cx="294" cy="215" rx="28" ry="18" fill="#080b10"/>
+
+  <!-- Eyes — glowing cyan -->
+  <ellipse cx="218" cy="215" rx="18" ry="11" fill="#00d4ff" opacity="0.9">
+    <animate attributeName="opacity" values="0.9;0.5;0.9" dur="3s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse cx="294" cy="215" rx="18" ry="11" fill="#00d4ff" opacity="0.9">
+    <animate attributeName="opacity" values="0.9;0.5;0.9" dur="3s" repeatCount="indefinite"/>
+  </ellipse>
+
+  <!-- Eye highlights -->
+  <ellipse cx="224" cy="211" rx="5" ry="3" fill="#ffffff" opacity="0.6"/>
+  <ellipse cx="300" cy="211" rx="5" ry="3" fill="#ffffff" opacity="0.6"/>
+
+  <!-- Nose bridge -->
+  <line x1="256" y1="195" x2="256" y2="248" stroke="#1c2638" stroke-width="1.5"/>
+
+  <!-- Mouth — subtle line -->
+  <path d="M 225 278 Q 240 286 256 286 Q 272 286 287 278" fill="none" stroke="#00d4ff" stroke-width="2" opacity="0.4"/>
+
+  <!-- Ear panels -->
+  <rect x="164" y="195" width="12" height="50" rx="6" fill="#121822" stroke="#1c2638" stroke-width="1"/>
+  <rect x="336" y="195" width="12" height="50" rx="6" fill="#121822" stroke="#1c2638" stroke-width="1"/>
+  <circle cx="170" cy="220" r="3" fill="#00d4ff" opacity="0.6"/>
+  <circle cx="342" cy="220" r="3" fill="#00d4ff" opacity="0.6"/>
+
+  <!-- Top accent line -->
+  <path d="M 220 115 Q 256 105 292 115" fill="none" stroke="#00d4ff" stroke-width="2" opacity="0.5"/>
+
+  <!-- Brand text -->
+  <text x="256" y="460" font-family="monospace" font-size="42" font-weight="900"
+        fill="#00d4ff" text-anchor="middle" letter-spacing="8">ONYX</text>
 </svg>

@@ -84,7 +84,7 @@ DEFAULT_SETTINGS = {
     },
     "model": {
         "provider": "anthropic",
-        "name": "claude-opus-4-6",
+        "name": "claude-sonnet-4-6",
     },
     "theme": "dark",
 }

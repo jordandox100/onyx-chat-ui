@@ -1,23 +1,36 @@
-"""Chat widget for displaying and managing conversations"""
+"""Chat widget — messages, streaming, model selector, attachments, tools"""
 import asyncio
+import os
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QPushButton, QScrollArea, QLabel, QFrame, QCheckBox
+    QPushButton, QLabel, QFrame, QCheckBox, QComboBox, QFileDialog,
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer
+from PySide6.QtGui import QTextCursor, QColor
 
-from desktop_app.services.chat_service import ChatService
-from desktop_app.services.voice_service import VoiceService
+from desktop_app.services.chat_service import ChatService, ANTHROPIC_MODELS
+from desktop_app.services.voice_service import VoiceService, WakeWordThread, VOICE_AVAILABLE
 from desktop_app.services.tts_service import TTSService
 from desktop_app.services.storage_service import StorageService
+from desktop_app.ui.styles import (
+    USER_MSG_HTML, AGENT_MSG_HTML, TOOL_MSG_HTML,
+    TYPING_INDICATOR_HTML, ATTACHMENT_HTML,
+    BG_DEEP, BG_BASE, BG_SURFACE, BG_RAISED, BORDER,
+    TEXT_PRI, TEXT_SEC, TEXT_MUTED, ACCENT, ACCENT_DIM, AGENT_BG,
+)
 from desktop_app.utils.logger import get_logger
 
 logger = get_logger()
 
+STREAM_MS = 25          # ms per tick
+STREAM_CHARS = 4        # chars per tick
+
 
 class ChatThread(QThread):
-    """Thread for handling async chat operations"""
+    """Background thread for LLM calls + tool execution."""
+    tool_output = Signal(str, str, str)   # type, cmd, result
     response_ready = Signal(str)
     error_occurred = Signal(str)
 
@@ -31,315 +44,468 @@ class ChatThread(QThread):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+
+            def on_tool(t, cmd, res):
+                self.tool_output.emit(t, cmd, res)
+
             response = loop.run_until_complete(
-                self.chat_service.send_message(self.message, self.chat_id)
+                self.chat_service.send_message(
+                    self.message, self.chat_id, on_tool_output=on_tool,
+                )
             )
             self.response_ready.emit(response)
         except Exception as e:
-            logger.error(f"Error in chat thread: {e}")
+            logger.error(f"Chat thread error: {e}")
             self.error_occurred.emit(str(e))
         finally:
             loop.close()
 
 
 class VoiceThread(QThread):
-    """Thread for handling voice recording"""
     transcription_ready = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, voice_service):
+    def __init__(self, voice_service, seconds=5):
         super().__init__()
         self.voice_service = voice_service
+        self.seconds = seconds
 
     def run(self):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             text = loop.run_until_complete(
-                self.voice_service.record_and_transcribe()
+                self.voice_service.record_and_transcribe(self.seconds)
             )
             if text:
                 self.transcription_ready.emit(text)
         except Exception as e:
-            logger.error(f"Error in voice thread: {e}")
             self.error_occurred.emit(str(e))
         finally:
             loop.close()
 
 
 class ChatWidget(QWidget):
+    request_refresh_sidebar = Signal()
+
     def __init__(self):
         super().__init__()
         self.chat_service = ChatService()
         self.voice_service = VoiceService()
         self.tts_service = TTSService()
         self.storage = StorageService()
+
         self.chat_id = None
         self.chat_thread = None
         self.voice_thread = None
+        self.wake_thread = None
+        self._attached_files: list[dict] = []
+
+        # Streaming state
+        self._stream_text = ""
+        self._stream_pos = 0
+        self._stream_timer = QTimer(self)
+        self._stream_timer.timeout.connect(self._stream_tick)
+
         self.init_ui()
+        self._load_settings()
+
+    # ── UI construction ──────────────────────────────────────
 
     def init_ui(self):
-        """Initialize the chat interface"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # Top bar with TTS toggle
-        top_bar = QFrame()
-        top_bar.setObjectName("topBar")
-        top_bar.setStyleSheet("""
-            QFrame#topBar {
-                background-color: #111111;
-                border-radius: 10px;
-                padding: 4px;
-            }
-        """)
-        top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(16, 8, 16, 8)
+        # ── Top bar ──────────────────────────────────────────
+        top = QFrame()
+        top.setStyleSheet(f"background:{BG_BASE}; border-bottom:1px solid {BORDER};")
+        top_lay = QHBoxLayout(top)
+        top_lay.setContentsMargins(16, 8, 16, 8)
 
-        top_label = QLabel("ONYX Chat")
-        top_label.setStyleSheet("font-size: 16px; font-weight: 600; color: #4a9eff; background: transparent;")
-        top_layout.addWidget(top_label)
+        lbl = QLabel("ONYX")
+        lbl.setStyleSheet(f"font-size:18px; font-weight:800; color:{ACCENT}; letter-spacing:3px;")
+        top_lay.addWidget(lbl)
+        top_lay.addStretch()
 
-        top_layout.addStretch()
+        # Model selector
+        self.model_combo = QComboBox()
+        for display, _ in ANTHROPIC_MODELS:
+            self.model_combo.addItem(display)
+        self.model_combo.currentIndexChanged.connect(self._on_model_changed)
+        top_lay.addWidget(QLabel("Model"))
+        top_lay.addWidget(self.model_combo)
+
+        top_lay.addSpacing(16)
 
         # TTS toggle
-        self.tts_checkbox = QCheckBox("Voice Replies")
-        self.tts_checkbox.setObjectName("ttsToggle")
-        self.tts_checkbox.setToolTip("Enable text-to-speech for AI responses")
-        self.tts_checkbox.setChecked(self.tts_service.enabled)
-        self.tts_checkbox.stateChanged.connect(self._on_tts_toggled)
-        self.tts_checkbox.setStyleSheet("""
-            QCheckBox#ttsToggle {
-                color: #909090;
-                font-size: 13px;
-                spacing: 8px;
-                background: transparent;
-            }
-            QCheckBox#ttsToggle:hover {
-                color: #e0e0e0;
-            }
-            QCheckBox#ttsToggle::indicator {
-                width: 36px;
-                height: 20px;
-                border-radius: 10px;
-                background-color: #2a2a2a;
-                border: 2px solid #3a3a3a;
-            }
-            QCheckBox#ttsToggle::indicator:checked {
-                background-color: #4a9eff;
-                border-color: #4a9eff;
-            }
-        """)
-        top_layout.addWidget(self.tts_checkbox)
+        self.tts_check = QCheckBox("TTS")
+        self.tts_check.setToolTip("Read responses aloud")
+        self.tts_check.stateChanged.connect(self._on_tts_toggled)
+        if not self.tts_service.available:
+            self.tts_check.setEnabled(False)
+            self.tts_check.setToolTip("Install espeak-ng + pyttsx3")
+        top_lay.addWidget(self.tts_check)
 
-        tts_available = self.tts_service.available
-        if not tts_available:
-            self.tts_checkbox.setEnabled(False)
-            self.tts_checkbox.setToolTip("TTS not available — install espeak-ng and pyttsx3")
+        # Wake word toggle
+        self.ww_check = QCheckBox("Wake")
+        self.ww_check.setToolTip("Listen for 'Onyx' wake word")
+        self.ww_check.stateChanged.connect(self._on_wake_toggled)
+        if not VOICE_AVAILABLE:
+            self.ww_check.setEnabled(False)
+        top_lay.addWidget(self.ww_check)
 
-        layout.addWidget(top_bar)
+        root.addWidget(top)
 
-        # Chat display area
+        # ── Chat display ─────────────────────────────────────
         self.chat_display = QTextEdit()
         self.chat_display.setObjectName("chatArea")
         self.chat_display.setReadOnly(True)
-        self.chat_display.setStyleSheet("""
-            QTextEdit {
-                background-color: #0a0a0a;
-                color: #e0e0e0;
+        self.chat_display.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {BG_DEEP};
+                color: {TEXT_PRI};
                 border: none;
-                font-size: 15px;
-                line-height: 1.6;
-                padding: 16px;
-            }
+                font-size: 14px;
+                padding: 12px;
+            }}
         """)
-        layout.addWidget(self.chat_display, stretch=1)
+        root.addWidget(self.chat_display, stretch=1)
 
-        # Input area
-        input_container = QFrame()
-        input_container.setStyleSheet("""
-            QFrame {
-                background-color: #111111;
-                border-radius: 16px;
-                padding: 8px;
-            }
-        """)
-        input_layout = QHBoxLayout(input_container)
-        input_layout.setContentsMargins(8, 8, 8, 8)
-        input_layout.setSpacing(12)
+        # ── Attachment bar (hidden until files attached) ─────
+        self.attach_bar = QFrame()
+        self.attach_bar.setStyleSheet(f"background:{BG_SURFACE}; border-top:1px solid {BORDER};")
+        self.attach_bar.hide()
+        self.attach_bar_layout = QHBoxLayout(self.attach_bar)
+        self.attach_bar_layout.setContentsMargins(16, 4, 16, 4)
+        self.attach_label = QLabel("")
+        self.attach_label.setStyleSheet(f"color:{TEXT_SEC}; font-size:12px;")
+        self.attach_bar_layout.addWidget(self.attach_label)
+        clear_att = QPushButton("x")
+        clear_att.setFixedSize(20, 20)
+        clear_att.setStyleSheet(f"background:transparent; color:{TEXT_MUTED}; border:none; font-size:14px;")
+        clear_att.clicked.connect(self._clear_attachments)
+        self.attach_bar_layout.addWidget(clear_att)
+        self.attach_bar_layout.addStretch()
+        root.addWidget(self.attach_bar)
+
+        # ── Input bar ────────────────────────────────────────
+        inp_frame = QFrame()
+        inp_frame.setStyleSheet(f"background:{BG_BASE}; border-top:1px solid {BORDER};")
+        inp_lay = QHBoxLayout(inp_frame)
+        inp_lay.setContentsMargins(12, 10, 12, 10)
+        inp_lay.setSpacing(8)
+
+        # Attach button
+        self.attach_btn = QPushButton("+")
+        self.attach_btn.setObjectName("attachButton")
+        self.attach_btn.setToolTip("Attach file")
+        self.attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.attach_btn.clicked.connect(self._pick_file)
+        inp_lay.addWidget(self.attach_btn)
 
         # Message input
-        self.message_input = QTextEdit()
-        self.message_input.setPlaceholderText("Type your message here...")
-        self.message_input.setMaximumHeight(120)
-        self.message_input.setStyleSheet("""
-            QTextEdit {
-                background-color: #1a1a1a;
-                color: #e0e0e0;
-                border: 2px solid #252525;
-                border-radius: 12px;
-                padding: 12px 16px;
-                font-size: 15px;
-            }
-            QTextEdit:focus {
-                border-color: #4a9eff;
-            }
+        self.msg_input = QTextEdit()
+        self.msg_input.setPlaceholderText("Message ONYX...")
+        self.msg_input.setMaximumHeight(100)
+        self.msg_input.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {BG_SURFACE};
+                color: {TEXT_PRI};
+                border: 1px solid {BORDER};
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 14px;
+            }}
+            QTextEdit:focus {{ border-color: {ACCENT}; }}
         """)
-        input_layout.addWidget(self.message_input, stretch=1)
-
-        # Button container
-        button_layout = QVBoxLayout()
-        button_layout.setSpacing(8)
+        inp_lay.addWidget(self.msg_input, stretch=1)
 
         # Voice button
-        self.voice_button = QPushButton("Mic")
-        self.voice_button.setObjectName("voiceButton")
-        self.voice_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.voice_button.setToolTip("Push to talk")
-        self.voice_button.clicked.connect(self.start_voice_input)
-        button_layout.addWidget(self.voice_button)
+        self.voice_btn = QPushButton("Mic")
+        self.voice_btn.setObjectName("voiceButton")
+        self.voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.voice_btn.clicked.connect(self._start_voice)
+        inp_lay.addWidget(self.voice_btn)
 
         # Send button
-        self.send_button = QPushButton("Send")
-        self.send_button.setObjectName("primaryButton")
-        self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.send_button.clicked.connect(self.send_message)
-        self.send_button.setMinimumWidth(80)
-        button_layout.addWidget(self.send_button)
+        self.send_btn = QPushButton("Send")
+        self.send_btn.setObjectName("primaryButton")
+        self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.send_btn.clicked.connect(self.send_message)
+        self.send_btn.setMinimumWidth(70)
+        inp_lay.addWidget(self.send_btn)
 
-        input_layout.addLayout(button_layout)
-        layout.addWidget(input_container)
+        root.addWidget(inp_frame)
+
+    # ── Settings persistence ─────────────────────────────────
+
+    def _load_settings(self):
+        s = self.storage.get_settings()
+        model = s.get("model", {}).get("name", "claude-sonnet-4-6")
+        for i, (_, mid) in enumerate(ANTHROPIC_MODELS):
+            if mid == model:
+                self.model_combo.setCurrentIndex(i)
+                break
+        self.tts_check.setChecked(s.get("tts", {}).get("enabled", False))
+
+    def _on_model_changed(self, idx):
+        if 0 <= idx < len(ANTHROPIC_MODELS):
+            _, model_id = ANTHROPIC_MODELS[idx]
+            self.chat_service.set_model(model_id)
 
     def _on_tts_toggled(self, state):
-        self.tts_service.enabled = (state == Qt.CheckState.Checked.value)
+        self.tts_service.enabled = bool(state)
+
+    def _on_wake_toggled(self, state):
+        if state and VOICE_AVAILABLE:
+            self.wake_thread = WakeWordThread(self.voice_service)
+            self.wake_thread.wake_word_detected.connect(self._start_voice)
+            self.wake_thread.start()
+        elif self.wake_thread:
+            self.wake_thread.stop()
+            self.wake_thread = None
+
+    # ── Chat operations ──────────────────────────────────────
 
     def set_chat_id(self, chat_id):
-        """Set the current chat ID"""
         self.chat_id = chat_id
+        self.chat_service.switch_chat(chat_id)
 
     def load_chat(self, chat_id, messages):
-        """Load a chat with its message history"""
         self.chat_id = chat_id
+        self.chat_service.switch_chat(chat_id)
         self.chat_display.clear()
-        for msg in messages:
-            if msg['role'] == 'user':
-                self.append_user_message(msg['content'])
+        for m in messages:
+            if m["role"] == "user":
+                self._show_user_msg(m["content"])
             else:
-                self.append_assistant_message(msg['content'], speak=False)
+                self._show_agent_msg(m["content"])
 
     def clear_chat(self):
-        """Clear the chat display"""
         self.chat_display.clear()
         self.chat_id = None
 
-    def append_user_message(self, text):
-        """Append a user message to the chat"""
-        escaped = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
-        self.chat_display.append(f"""
-        <div style='margin: 12px 0; text-align: right;'>
-            <div style='display: inline-block; background-color: #4a9eff; color: #ffffff;
-                        border-radius: 16px; padding: 12px 16px; max-width: 70%; text-align: left;'>
-                <strong>You:</strong><br>
-                {escaped}
-            </div>
-        </div>
-        """)
-        self.scroll_to_bottom()
+    # ── Message display ──────────────────────────────────────
 
-    def append_assistant_message(self, text, speak=True):
-        """Append an assistant message to the chat"""
-        escaped = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
-        self.chat_display.append(f"""
-        <div style='margin: 12px 0; text-align: left;'>
-            <div style='display: inline-block; background-color: #1a1a1a; color: #e0e0e0;
-                        border: 1px solid #252525; border-radius: 16px; padding: 12px 16px;
-                        max-width: 70%; text-align: left;'>
-                <strong style='color: #4a9eff;'>ONYX:</strong><br>
-                {escaped}
-            </div>
-        </div>
-        """)
-        self.scroll_to_bottom()
+    def _show_user_msg(self, text):
+        escaped = self._esc(text)
+        self.chat_display.append(USER_MSG_HTML.replace("{text}", escaped))
+        self._scroll()
 
-        if speak and self.tts_service.enabled:
-            self.tts_service.speak(text)
+    def _show_agent_msg(self, text):
+        escaped = self._esc(text)
+        self.chat_display.append(AGENT_MSG_HTML.replace("{text}", escaped))
+        self._scroll()
 
-    def scroll_to_bottom(self):
-        """Scroll chat display to bottom"""
-        scrollbar = self.chat_display.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+    def _show_tool_output(self, tool_type, cmd, result):
+        cmd_esc = self._esc(cmd[:200])
+        res_esc = self._esc(result[:2000])
+        html = TOOL_MSG_HTML.replace("{tool_type}", tool_type)\
+                            .replace("{tool_cmd}", cmd_esc)\
+                            .replace("{tool_result}", res_esc)
+        self.chat_display.append(html)
+        self._scroll()
+
+    def _show_typing(self):
+        self.chat_display.append(TYPING_INDICATOR_HTML)
+        self._scroll()
+
+    def _remove_typing(self):
+        """Remove the last 'thinking...' indicator."""
+        doc = self.chat_display.document()
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        # Walk back to find the typing div
+        for _ in range(10):
+            sel = cursor.selectedText()
+            if "thinking" in sel.lower():
+                cursor.removeSelectedText()
+                cursor.deletePreviousChar()
+                return
+            cursor.movePosition(QTextCursor.MoveOperation.PreviousBlock, QTextCursor.MoveMode.KeepAnchor)
+
+    # ── Streaming ────────────────────────────────────────────
+
+    def _start_streaming(self, full_text):
+        self._remove_typing()
+        self._stream_text = full_text
+        self._stream_pos = 0
+
+        # Insert ONYX header
+        self.chat_display.append(
+            f'<div style="margin:8px 120px 0 0; padding:12px 16px;'
+            f' background-color:{AGENT_BG}; border-left:3px solid {ACCENT};'
+            f' border-radius:2px 12px 12px 12px;">'
+            f'<span style="color:{ACCENT}; font-weight:700; font-size:11px;'
+            f' text-transform:uppercase; letter-spacing:1px;">ONYX</span><br>'
+        )
+
+        self._stream_timer.start(STREAM_MS)
+
+    def _stream_tick(self):
+        end = min(self._stream_pos + STREAM_CHARS, len(self._stream_text))
+        chunk = self._stream_text[self._stream_pos:end]
+        self._stream_pos = end
+
+        cursor = self.chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(chunk)
+        self._scroll()
+
+        if self._stream_pos >= len(self._stream_text):
+            self._stream_timer.stop()
+            # Close the div
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertHtml("</div>")
+            self._on_stream_done()
+
+    def _on_stream_done(self):
+        self.send_btn.setEnabled(True)
+        self.msg_input.setEnabled(True)
+        self.msg_input.setFocus()
+        if self.tts_service.enabled:
+            self.tts_service.speak(self._stream_text)
+
+    # ── Send ─────────────────────────────────────────────────
 
     def send_message(self):
-        """Send a message to the AI assistant"""
-        message = self.message_input.toPlainText().strip()
-        if not message:
+        text = self.msg_input.toPlainText().strip()
+        if not text and not self._attached_files:
             return
 
         if not self.chat_id:
-            self.chat_id = self.storage.create_chat(message[:50])
+            self.chat_id = self.storage.create_chat(text[:50] or "Attachment")
+            self.request_refresh_sidebar.emit()
 
-        self.append_user_message(message)
-        self.message_input.clear()
+        # Build message with attachments
+        full_msg = self._build_message_with_attachments(text)
 
-        self.send_button.setEnabled(False)
-        self.message_input.setEnabled(False)
+        self._show_user_msg(text)
+        if self._attached_files:
+            for f in self._attached_files:
+                self.chat_display.append(
+                    ATTACHMENT_HTML.replace("{filename}", f["name"]).replace("{size}", f["size_str"])
+                )
+            self._clear_attachments()
 
-        self.chat_thread = ChatThread(self.chat_service, message, self.chat_id)
-        self.chat_thread.response_ready.connect(self.on_response_ready)
-        self.chat_thread.error_occurred.connect(self.on_error)
+        self.msg_input.clear()
+        self._show_typing()
+
+        self.send_btn.setEnabled(False)
+        self.msg_input.setEnabled(False)
+
+        self.chat_thread = ChatThread(self.chat_service, full_msg, self.chat_id)
+        self.chat_thread.tool_output.connect(self._on_tool_output)
+        self.chat_thread.response_ready.connect(self._on_response)
+        self.chat_thread.error_occurred.connect(self._on_error)
         self.chat_thread.start()
 
-        logger.info(f"Sent message in chat {self.chat_id}")
+    @Slot(str, str, str)
+    def _on_tool_output(self, ttype, cmd, result):
+        self._remove_typing()
+        self._show_tool_output(ttype, cmd, result)
+        self._show_typing()
 
     @Slot(str)
-    def on_response_ready(self, response):
-        """Handle assistant response"""
-        self.append_assistant_message(response, speak=True)
-        self.send_button.setEnabled(True)
-        self.message_input.setEnabled(True)
-        self.message_input.setFocus()
+    def _on_response(self, response):
+        self._start_streaming(response)
+        self.request_refresh_sidebar.emit()
 
     @Slot(str)
-    def on_error(self, error_message):
-        """Handle error"""
-        self.append_assistant_message(f"Error: {error_message}", speak=False)
-        self.send_button.setEnabled(True)
-        self.message_input.setEnabled(True)
+    def _on_error(self, err):
+        self._remove_typing()
+        self._show_agent_msg(f"Error: {err}")
+        self.send_btn.setEnabled(True)
+        self.msg_input.setEnabled(True)
 
-    def start_voice_input(self):
-        """Start voice recording"""
+    # ── Attachments ──────────────────────────────────────────
+
+    def _pick_file(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Attach Files")
+        for p in paths:
+            path = Path(p)
+            try:
+                size = path.stat().st_size
+                content = ""
+                if size < 200_000:
+                    try:
+                        content = path.read_text(errors="replace")
+                    except Exception:
+                        content = f"(binary file, {size} bytes)"
+                else:
+                    content = f"(file too large to inline: {size} bytes)"
+
+                size_str = f"{size}" if size < 1024 else f"{size/1024:.1f}KB"
+                self._attached_files.append({
+                    "name": path.name,
+                    "path": str(path),
+                    "content": content,
+                    "size_str": size_str,
+                })
+            except Exception as e:
+                logger.error(f"Attach error: {e}")
+
+        if self._attached_files:
+            names = ", ".join(f["name"] for f in self._attached_files)
+            self.attach_label.setText(f"Attached: {names}")
+            self.attach_bar.show()
+
+    def _clear_attachments(self):
+        self._attached_files.clear()
+        self.attach_bar.hide()
+
+    def _build_message_with_attachments(self, text: str) -> str:
+        if not self._attached_files:
+            return text
+        parts = []
+        for f in self._attached_files:
+            parts.append(f"[Attached file: {f['name']} ({f['size_str']})]\n{f['content']}\n")
+        parts.append(text)
+        return "\n".join(parts)
+
+    # ── Voice ────────────────────────────────────────────────
+
+    def _start_voice(self):
         if self.voice_thread and self.voice_thread.isRunning():
             return
-
-        self.voice_button.setObjectName("voiceButtonRecording")
-        self.voice_button.setStyleSheet(self.voice_button.styleSheet())
-        self.voice_button.setText("REC")
-        self.voice_button.setEnabled(False)
+        self.voice_btn.setObjectName("voiceButtonRecording")
+        self.voice_btn.style().unpolish(self.voice_btn)
+        self.voice_btn.style().polish(self.voice_btn)
+        self.voice_btn.setText("REC")
+        self.voice_btn.setEnabled(False)
 
         self.voice_thread = VoiceThread(self.voice_service)
-        self.voice_thread.transcription_ready.connect(self.on_transcription_ready)
-        self.voice_thread.error_occurred.connect(self.on_voice_error)
-        self.voice_thread.finished.connect(self.on_voice_finished)
+        self.voice_thread.transcription_ready.connect(self._on_transcription)
+        self.voice_thread.error_occurred.connect(self._on_voice_error)
+        self.voice_thread.finished.connect(self._on_voice_done)
         self.voice_thread.start()
 
-        logger.info("Started voice recording")
+    @Slot(str)
+    def _on_transcription(self, text):
+        self.msg_input.setPlainText(text)
 
     @Slot(str)
-    def on_transcription_ready(self, text):
-        """Handle transcribed text"""
-        self.message_input.setPlainText(text)
-        logger.info(f"Transcribed: {text}")
+    def _on_voice_error(self, err):
+        logger.error(f"Voice error: {err}")
 
-    @Slot(str)
-    def on_voice_error(self, error_message):
-        """Handle voice error"""
-        logger.error(f"Voice error: {error_message}")
+    def _on_voice_done(self):
+        self.voice_btn.setObjectName("voiceButton")
+        self.voice_btn.style().unpolish(self.voice_btn)
+        self.voice_btn.style().polish(self.voice_btn)
+        self.voice_btn.setText("Mic")
+        self.voice_btn.setEnabled(True)
 
-    def on_voice_finished(self):
-        """Handle voice recording finished"""
-        self.voice_button.setObjectName("voiceButton")
-        self.voice_button.setStyleSheet(self.voice_button.styleSheet())
-        self.voice_button.setText("Mic")
-        self.voice_button.setEnabled(True)
+    # ── Helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _esc(text: str) -> str:
+        return (text.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace("\n", "<br>"))
+
+    def _scroll(self):
+        sb = self.chat_display.verticalScrollBar()
+        sb.setValue(sb.maximum())
