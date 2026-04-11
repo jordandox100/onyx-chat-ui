@@ -3,7 +3,8 @@
     "enabled": false,
     "rate": 200,
     "volume": 0.0,
-    "voice_idx": 0
+    "voice_idx": 0,
+    "speed": 1.0
   },
   "voice_input": {
     "record_seconds": 5

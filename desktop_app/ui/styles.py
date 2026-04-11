@@ -101,6 +101,23 @@ QPushButton#primaryButton:pressed {{
     background-color: {ACCENT_DIM};
 }}
 
+/* Stop agent button */
+QPushButton#stopButton {{
+    background-color: {DANGER};
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    border-radius: 6px;
+    padding: 8px 16px;
+}}
+QPushButton#stopButton:hover {{
+    background-color: #f87171;
+}}
+QPushButton#stopButton:pressed {{
+    background-color: #dc2626;
+}}
+
 /* Compact toggle */
 QPushButton#compactToggle {{
     background-color: transparent;
@@ -221,6 +238,27 @@ QScrollBar:horizontal {{
     border: none;
 }}
 
+/* ── Slider ────────────────────────────────── */
+QSlider::groove:horizontal {{
+    background: {BORDER};
+    height: 4px;
+    border-radius: 2px;
+}}
+QSlider::handle:horizontal {{
+    background: {ACCENT};
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}}
+QSlider::handle:horizontal:hover {{
+    background: #33ddff;
+}}
+QSlider::sub-page:horizontal {{
+    background: {ACCENT_DIM};
+    border-radius: 2px;
+}}
+
 /* ── Checkbox / Toggle ─────────────────────── */
 QCheckBox {{
     color: {TEXT_SEC};
@@ -321,4 +359,22 @@ ATTACHMENT_HTML = """
     <span style="color:#00d4ff;">{filename}</span>
     <span style="color:#4e5d73;">({size})</span>
 </div>
+"""
+
+CODE_BLOCK_HTML = """
+<table width="100%" cellspacing="0" cellpadding="0" style="margin:8px 0;">
+<tr>
+<td bgcolor="#121822" style="padding:4px 12px; border:1px solid #1c2638; border-bottom:none;">
+<font color="#4e5d73" size="2">{lang}</font>
+</td>
+<td bgcolor="#121822" align="right" style="padding:4px 12px; border:1px solid #1c2638; border-bottom:none; border-left:none;">
+<a href="copy://{key}" style="color:#00d4ff; font-size:11px; text-decoration:none;">Copy</a>
+</td>
+</tr>
+<tr>
+<td colspan="2" bgcolor="#0a0e14" style="padding:10px 14px; border:1px solid #1c2638; border-top:none;">
+<pre style="color:#c8d0dc; font-size:12px; margin:0; white-space:pre-wrap; font-family:monospace;">{code}</pre>
+</td>
+</tr>
+</table>
 """

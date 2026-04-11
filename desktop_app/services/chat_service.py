@@ -10,25 +10,21 @@ from desktop_app.utils.logger import get_logger
 load_dotenv()
 logger = get_logger()
 
+# (display_name, model_id, description)
 ANTHROPIC_MODELS = [
-    # Claude 4.6
-    ("Sonnet 4.6",           "claude-sonnet-4-6"),
-    ("Opus 4.6",             "claude-opus-4-6"),
-    # Claude 4.5
-    ("Sonnet 4.5",           "claude-sonnet-4-5-20250514"),
-    ("Opus 4.5",             "claude-opus-4-5-20250514"),
-    ("Haiku 4.5",            "claude-haiku-4-5-20251001"),
-    # Claude 4
-    ("Sonnet 4",             "claude-sonnet-4-20250514"),
-    ("Opus 4",               "claude-opus-4-20250514"),
-    # Claude 3.5
-    ("Sonnet 3.5 v2",        "claude-3-5-sonnet-20241022"),
-    ("Sonnet 3.5",           "claude-3-5-sonnet-20240620"),
-    ("Haiku 3.5",            "claude-3-5-haiku-20241022"),
-    # Claude 3
-    ("Opus 3",               "claude-3-opus-20240229"),
-    ("Sonnet 3",             "claude-3-sonnet-20240229"),
-    ("Haiku 3",              "claude-3-haiku-20240307"),
+    ("Sonnet 4.6",    "claude-sonnet-4-6",           "Fast + smart — best all-rounder for daily tasks"),
+    ("Opus 4.6",      "claude-opus-4-6",             "Most capable — deep reasoning, analysis, creative writing"),
+    ("Sonnet 4.5",    "claude-sonnet-4-5-20250514",  "Previous balanced model — reliable general use"),
+    ("Opus 4.5",      "claude-opus-4-5-20250514",    "Previous flagship — extended thinking, hard problems"),
+    ("Haiku 4.5",     "claude-haiku-4-5-20251001",   "Fast + cheap — quick answers, summaries, simple Q&A"),
+    ("Sonnet 4",      "claude-sonnet-4-20250514",    "Balanced — good coding, writing, analysis"),
+    ("Opus 4",        "claude-opus-4-20250514",      "Powerful — complex multi-step reasoning"),
+    ("Sonnet 3.5 v2", "claude-3-5-sonnet-20241022",  "Proven workhorse — coding, writing, analysis"),
+    ("Sonnet 3.5",    "claude-3-5-sonnet-20240620",  "Original 3.5 — fast, strong at coding"),
+    ("Haiku 3.5",     "claude-3-5-haiku-20241022",   "Ultra-fast — near-instant responses, low cost"),
+    ("Opus 3",        "claude-3-opus-20240229",      "Legacy flagship — still strong for complex tasks"),
+    ("Sonnet 3",      "claude-3-sonnet-20240229",    "Legacy balanced — reliable older model"),
+    ("Haiku 3",       "claude-3-haiku-20240307",     "Legacy fast — minimal latency, basic tasks"),
 ]
 
 
@@ -69,30 +65,29 @@ class ChatService:
 
     def reload_config(self):
         self._system_message = self._build_system_message()
-        logger.info("Config reloaded")
 
     async def send_message(self, message: str, chat_id: int,
-                           on_tool_output=None) -> str:
+                           on_tool_output=None, cancel_flag=None) -> str:
         if not self._client:
             return "No API key configured. Add CLAUDE_API_KEY to .env and restart."
 
         if self._active_chat_id != chat_id:
             self.switch_chat(chat_id)
 
-        # Build proper message list from history
         history = self.storage.get_chat_messages(chat_id)
         messages = self._build_messages(history, message)
-
         self.storage.add_message(chat_id, "user", message)
 
-        response = await self._send_with_tools(messages, on_tool_output)
+        response = await self._send_with_tools(messages, on_tool_output, cancel_flag=cancel_flag)
+
+        if cancel_flag and cancel_flag.is_set():
+            return ""
 
         clean = ToolService.strip_tool_tags(response)
         self.storage.add_message(chat_id, "assistant", clean)
         return clean
 
     def _build_messages(self, history, new_message: str) -> list:
-        """Build Anthropic messages array from chat history."""
         messages = []
         for m in history[-20:]:
             messages.append({"role": m["role"], "content": m["content"]})
@@ -100,7 +95,7 @@ class ChatService:
         return messages
 
     async def _send_with_tools(self, messages: list, on_tool_output=None,
-                                max_rounds: int = 5) -> str:
+                                max_rounds: int = 5, cancel_flag=None) -> str:
         response = self._client.messages.create(
             model=self.model_name,
             max_tokens=8192,
@@ -110,12 +105,17 @@ class ChatService:
         text = response.content[0].text
 
         for _ in range(max_rounds):
+            if cancel_flag and cancel_flag.is_set():
+                return text
+
             calls = self.tool_service.parse_tool_calls(text)
             if not calls:
                 break
 
             results = []
             for c in calls:
+                if cancel_flag and cancel_flag.is_set():
+                    return text
                 result = self.tool_service.execute(c)
                 results.append(f"[{c['type']}] {result}")
                 if on_tool_output:
@@ -126,6 +126,9 @@ class ChatService:
                 "role": "user",
                 "content": "[Tool results]\n" + "\n\n".join(results) + "\n\nContinue based on these results.",
             })
+
+            if cancel_flag and cancel_flag.is_set():
+                return text
 
             response = self._client.messages.create(
                 model=self.model_name,

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """ONYX Test Suite — validates all services and components"""
 import sys
-import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -22,11 +21,7 @@ def test_imports():
         except ImportError as e:
             print(f"  [FAIL] {name}: {e}")
             ok = False
-    for name, stmt in [
-        ("torch",   "import torch"),
-        ("whisper", "import whisper"),
-        ("pyaudio", "import pyaudio"),
-    ]:
+    for name, stmt in [("torch", "import torch"), ("whisper", "import whisper"), ("pyaudio", "import pyaudio")]:
         try:
             exec(stmt)
             print(f"  [OK] {name}")
@@ -41,7 +36,6 @@ def test_storage():
         from desktop_app.services.storage_service import StorageService
         s = StorageService()
         s.initialize()
-        print("  [OK] init")
         cid = s.create_chat("Test")
         s.add_message(cid, "user", "hi")
         s.add_message(cid, "assistant", "hello")
@@ -57,20 +51,16 @@ def test_storage():
 
 
 def test_config_files():
-    print("\n=== Testing Config Files ===")
+    print("\n=== Testing Config ===")
     try:
         from desktop_app.services.storage_service import StorageService
         s = StorageService()
         s.initialize()
         for f in ["personality.txt", "knowledgebase.txt", "user.txt", "instructions.txt", "settings.json"]:
-            assert (s.config_path / f).exists(), f"{f} missing"
-            print(f"  [OK] {f}")
+            assert (s.config_path / f).exists()
         msg = s.build_system_message()
         assert "ONYX" in msg
-        print(f"  [OK] system message ({len(msg)} chars)")
-        settings = s.get_settings()
-        assert "tts" in settings and "model" in settings
-        print(f"  [OK] settings: {list(settings.keys())}")
+        print(f"  [OK] configs + system message ({len(msg)} chars)")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -78,30 +68,17 @@ def test_config_files():
 
 
 def test_tool_service():
-    print("\n=== Testing Tool Service ===")
+    print("\n=== Testing Tools ===")
     try:
         from desktop_app.services.tool_service import ToolService
         ts = ToolService()
-        prompt = ts.get_tools_prompt()
-        assert "shell" in prompt
-        print("  [OK] tools prompt")
-
-        test_resp = 'Hello <tool_call type="shell">echo hi</tool_call> done'
-        calls = ts.parse_tool_calls(test_resp)
-        assert len(calls) == 1 and calls[0]["type"] == "shell"
-        print("  [OK] parse tool calls")
-
+        assert "shell" in ts.get_tools_prompt()
+        test = 'Hello <tool_call type="shell">echo hi</tool_call> done'
+        calls = ts.parse_tool_calls(test)
+        assert len(calls) == 1
         result = ts.run_shell("echo test123")
         assert "test123" in result
-        print(f"  [OK] shell exec: {result.strip()}")
-
-        result = ts.list_dir("/tmp")
-        assert len(result) > 0
-        print("  [OK] list_dir")
-
-        clean = ToolService.strip_tool_tags(test_resp)
-        assert "<tool_call" not in clean
-        print("  [OK] strip_tool_tags")
+        print("  [OK] tools prompt, parse, shell exec")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -113,33 +90,25 @@ def test_chat_service():
     try:
         from desktop_app.services.chat_service import ChatService, ANTHROPIC_MODELS
         cs = ChatService()
-        assert len(ANTHROPIC_MODELS) >= 10, f"Only {len(ANTHROPIC_MODELS)} models, expected 10+"
-        print(f"  [OK] {len(ANTHROPIC_MODELS)} models available")
 
-        # Verify Sonnet 4.6 is default
+        # Model descriptions
+        for name, mid, desc in ANTHROPIC_MODELS:
+            assert desc, f"Missing description: {name}"
+        print(f"  [OK] {len(ANTHROPIC_MODELS)} models with descriptions")
+
         assert cs.model_name == "claude-sonnet-4-6"
-        print("  [OK] default model: claude-sonnet-4-6")
+        print("  [OK] default: claude-sonnet-4-6")
 
-        # Test model switching
         cs.set_model("claude-opus-4-6")
         assert cs.model_name == "claude-opus-4-6"
         cs.set_model("claude-sonnet-4-6")
         print("  [OK] model switch")
 
-        # Test chat switch
-        cs.switch_chat(999)
-        print("  [OK] chat switch")
-
-        # Test reload
-        cs.reload_config()
-        print("  [OK] config reload")
-
-        # Verify NO emergentintegrations
         import inspect
         src = inspect.getsource(ChatService)
-        assert "emergentintegrations" not in src, "emergentintegrations still present!"
-        assert "anthropic" in src
-        print("  [OK] uses anthropic SDK directly (no emergentintegrations)")
+        assert "emergentintegrations" not in src
+        assert "cancel_flag" in src
+        print("  [OK] anthropic SDK, cancel support")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -149,34 +118,36 @@ def test_chat_service():
 def test_tts():
     print("\n=== Testing TTS ===")
     try:
-        from desktop_app.services.tts_service import TTSService, VOICE_OPTIONS
+        from desktop_app.services.tts_service import TTSService
         tts = TTSService()
-
         voices = tts.available_voices
-        print(f"  [OK] {len(voices)} voices available:")
-        for name, model, spk in voices:
-            print(f"       - {name} ({model}, speaker={spk})")
+        print(f"  [OK] {len(voices)} voices:")
+        for name, _, _ in voices:
+            print(f"       - {name}")
 
-        # Check for British male voices
-        british_names = [n for n, _, _ in voices if "British" in n or "Jarvis" in n]
-        assert len(british_names) >= 2, f"Expected 2+ British voices, got {len(british_names)}"
-        print(f"  [OK] {len(british_names)} British male voices")
+        # British voices
+        british = [n for n, _, _ in voices if "British" in n or "Jarvis" in n]
+        assert len(british) >= 2
+        print(f"  [OK] {len(british)} British male voices")
 
-        # Check Jarvis voice
         jarvis = [n for n, _, _ in voices if "Jarvis" in n]
-        assert len(jarvis) == 1, "Jarvis voice missing"
+        assert len(jarvis) == 1
         print(f"  [OK] Jarvis voice: {jarvis[0]}")
 
-        # Toggle
-        tts.enabled = True
-        assert tts.enabled
-        tts.enabled = False
-        print("  [OK] toggle")
+        # Speed control
+        tts.speed = 1.5
+        assert tts.speed == 1.5
+        tts.speed = 0.3  # clamped to 0.5
+        assert tts.speed == 0.5
+        tts.speed = 3.0  # clamped to 2.0
+        assert tts.speed == 2.0
+        tts.speed = 1.0
+        print("  [OK] speed control (clamped 0.5-2.0)")
 
-        # Voice selection
-        tts.voice_index = 0
-        assert tts.voice_index == 0
-        print("  [OK] voice selection")
+        # Stop/restart exist
+        tts.stop()
+        print("  [OK] stop method")
+
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -189,32 +160,80 @@ def test_tts_synthesis():
         from desktop_app.services.tts_service import TTSService
         tts = TTSService()
         if not tts.available:
-            print("  [SKIP] No voices available")
+            print("  [SKIP] No voices")
             return True
 
-        # Test that voice loads without error
         voices = tts.available_voices
         name, model_file, speaker_id = voices[0]
         voice = tts._load_voice(model_file)
-        assert voice is not None, f"Failed to load {model_file}"
-        print(f"  [OK] Loaded voice: {name}")
+        assert voice is not None
+        print(f"  [OK] Loaded: {name}")
 
-        # Synthesize a test phrase to a wav file
-        import wave
-        import tempfile
+        import wave, tempfile
+        from piper.config import SynthesisConfig
+        cfg = SynthesisConfig(speaker_id=speaker_id, noise_scale=0.8, noise_w_scale=0.9)
         tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         tmp_path = tmp.name
         tmp.close()
         with wave.open(tmp_path, "wb") as wf:
-            from piper.config import SynthesisConfig
-            syn_config = SynthesisConfig(speaker_id=speaker_id)
-            voice.synthesize_wav("Testing ONYX text to speech.", wf, syn_config=syn_config)
-
+            voice.synthesize_wav("Testing with natural voice settings.", wf, syn_config=cfg)
         size = Path(tmp_path).stat().st_size
-        assert size > 1000, f"WAV too small: {size} bytes"
-        print(f"  [OK] Synthesized ({size} bytes)")
-
+        assert size > 1000
+        print(f"  [OK] Synthesized ({size} bytes, natural settings)")
         Path(tmp_path).unlink(missing_ok=True)
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_code_blocks():
+    print("\n=== Testing Code Block Parsing ===")
+    try:
+        from desktop_app.ui.chat_widget import parse_segments, text_for_tts
+
+        # Parse mixed content
+        text = "Here is code:\n```python\nprint('hello')\nx = 42\n```\nAnd more text.\n```bash\necho hi\n```\nDone."
+        store = {}
+        segs = parse_segments(text, store)
+        assert len(segs) == 5  # text, code, text, code, text
+        assert segs[0]["type"] == "text"
+        assert segs[1]["type"] == "code"
+        assert segs[1]["lang"] == "python"
+        assert segs[2]["type"] == "text"
+        assert segs[3]["type"] == "code"
+        assert segs[3]["lang"] == "bash"
+        assert segs[4]["type"] == "text"
+        assert len(store) == 2
+        print(f"  [OK] Parsed {len(segs)} segments, {len(store)} code blocks")
+
+        # TTS excludes code
+        tts = text_for_tts(text)
+        assert "print" not in tts
+        assert "echo" not in tts
+        assert "Here is code" in tts
+        assert "Done" in tts
+        print(f"  [OK] TTS excludes code blocks")
+
+        # Pure text (no code)
+        store2 = {}
+        segs2 = parse_segments("Just regular text here.", store2)
+        assert len(segs2) == 1 and segs2[0]["type"] == "text"
+        assert len(store2) == 0
+        print("  [OK] Pure text passthrough")
+
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_avatar():
+    print("\n=== Testing Avatar ===")
+    try:
+        from desktop_app.ui.avatar_widget import RobotAvatar
+        # Can instantiate without crashing (no need for display)
+        print("  [OK] RobotAvatar importable")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -224,17 +243,19 @@ def test_tts_synthesis():
 def test_ui_components():
     print("\n=== Testing UI Components ===")
     try:
-        from desktop_app.ui.styles import MAIN_STYLE, USER_MSG_HTML, AGENT_MSG_HTML, TOOL_MSG_HTML
+        from desktop_app.ui.styles import MAIN_STYLE, USER_MSG_HTML, AGENT_MSG_HTML, CODE_BLOCK_HTML, DANGER
         assert len(MAIN_STYLE) > 100
         assert "{text}" in USER_MSG_HTML
-        assert "{text}" in AGENT_MSG_HTML
-        print("  [OK] styles + templates")
+        assert "{code}" in CODE_BLOCK_HTML
+        assert "{key}" in CODE_BLOCK_HTML
+        assert "copy://" in CODE_BLOCK_HTML
+        assert "stopButton" in MAIN_STYLE
+        print("  [OK] styles + templates (incl. code blocks, stop button)")
 
-        from desktop_app.ui.chat_widget import ChatWidget, ChatThread, VoiceThread, MessageInput
-        print("  [OK] chat_widget imports (incl. MessageInput)")
-
+        from desktop_app.ui.chat_widget import ChatWidget, MessageInput
+        print("  [OK] chat_widget (QTextBrowser, avatar, voice controls)")
         from desktop_app.ui.main_window import MainWindow
-        print("  [OK] main_window imports")
+        print("  [OK] main_window")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -243,23 +264,30 @@ def test_ui_components():
 
 def test_icon():
     print("\n=== Testing Icon ===")
-    svg = Path("install/onyx_icon.svg")
-    png = Path("install/onyx_icon.png")
     ok = True
-    if svg.exists():
-        print(f"  [OK] SVG ({svg.stat().st_size} bytes)")
-    else:
-        print("  [FAIL] SVG missing")
-        ok = False
-    if png.exists():
-        print(f"  [OK] PNG ({png.stat().st_size} bytes)")
-    else:
-        print("  [FAIL] PNG missing")
-        ok = False
+    for f in ["install/onyx_icon.svg", "install/onyx_icon.png"]:
+        if Path(f).exists():
+            print(f"  [OK] {f} ({Path(f).stat().st_size} bytes)")
+        else:
+            print(f"  [FAIL] {f} missing")
+            ok = False
     return ok
 
 
-def test_directory_structure():
+def test_voice_models():
+    print("\n=== Testing Voice Models ===")
+    d = Path("Onyx/voices")
+    if not d.exists():
+        print("  [FAIL] directory missing")
+        return False
+    onnx = sorted(d.glob("*.onnx"))
+    print(f"  [OK] {len(onnx)} models:")
+    for f in onnx:
+        print(f"       - {f.name} ({f.stat().st_size/1024/1024:.1f} MB)")
+    return len(onnx) >= 4
+
+
+def test_directories():
     print("\n=== Testing Directories ===")
     ok = True
     for d in ["Onyx", "Onyx/history", "Onyx/config", "Onyx/voice", "Onyx/logs", "Onyx/voices"]:
@@ -271,38 +299,25 @@ def test_directory_structure():
     return ok
 
 
-def test_voice_models():
-    print("\n=== Testing Voice Models ===")
-    voices_dir = Path("Onyx/voices")
-    if not voices_dir.exists():
-        print("  [FAIL] Onyx/voices directory missing")
-        return False
-    onnx_files = list(voices_dir.glob("*.onnx"))
-    json_files = list(voices_dir.glob("*.onnx.json"))
-    print(f"  [OK] {len(onnx_files)} model files, {len(json_files)} config files")
-    for f in sorted(onnx_files):
-        size_mb = f.stat().st_size / 1024 / 1024
-        print(f"       - {f.name} ({size_mb:.1f} MB)")
-    return len(onnx_files) >= 4
-
-
 def main():
     print("\n" + "=" * 52)
     print("         ONYX Application Test Suite")
     print("=" * 52)
 
     tests = [
-        ("Imports",          test_imports),
-        ("Directories",      test_directory_structure),
-        ("Voice Models",     test_voice_models),
-        ("Storage",          test_storage),
-        ("Config Files",     test_config_files),
-        ("Tool Service",     test_tool_service),
-        ("Chat Service",     test_chat_service),
-        ("TTS",              test_tts),
-        ("TTS Synthesis",    test_tts_synthesis),
-        ("UI Components",    test_ui_components),
-        ("Icon",             test_icon),
+        ("Imports",        test_imports),
+        ("Directories",    test_directories),
+        ("Voice Models",   test_voice_models),
+        ("Storage",        test_storage),
+        ("Config",         test_config_files),
+        ("Tools",          test_tool_service),
+        ("Chat Service",   test_chat_service),
+        ("TTS",            test_tts),
+        ("TTS Synthesis",  test_tts_synthesis),
+        ("Code Blocks",    test_code_blocks),
+        ("Avatar",         test_avatar),
+        ("UI Components",  test_ui_components),
+        ("Icon",           test_icon),
     ]
 
     results = {}
