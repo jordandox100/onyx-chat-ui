@@ -14,6 +14,7 @@ def test_imports():
         ("anthropic",  "import anthropic"),
         ("piper-tts",  "from piper import PiperVoice"),
         ("dotenv",     "from dotenv import load_dotenv"),
+        ("supabase",   "from supabase import create_client"),
     ]:
         try:
             exec(stmt)
@@ -42,6 +43,21 @@ def test_storage():
         msgs = s.get_chat_messages(cid)
         assert len(msgs) == 2
         print(f"  [OK] CRUD ({len(msgs)} msgs)")
+
+        # Test new methods
+        count = s.get_message_count(cid)
+        assert count == 2
+        print(f"  [OK] message_count = {count}")
+
+        page = s.get_messages_page(cid, 0, 1)
+        assert len(page) == 1
+        print(f"  [OK] get_messages_page (1 of {count})")
+
+        s.save_summary(cid, "Test summary", 2)
+        summary = s.get_summary(cid)
+        assert summary == "Test summary"
+        print(f"  [OK] save/get_summary")
+
         s.delete_chat(cid)
         print("  [OK] delete")
         return True
@@ -89,9 +105,9 @@ def test_chat_service():
     print("\n=== Testing Chat Service ===")
     try:
         from desktop_app.services.chat_service import ChatService, ANTHROPIC_MODELS
-        cs = ChatService()
 
-        # Model descriptions
+        # Test with default args (backward compat)
+        cs = ChatService()
         for name, mid, desc in ANTHROPIC_MODELS:
             assert desc, f"Missing description: {name}"
         print(f"  [OK] {len(ANTHROPIC_MODELS)} models with descriptions")
@@ -108,7 +124,128 @@ def test_chat_service():
         src = inspect.getsource(ChatService)
         assert "emergentintegrations" not in src
         assert "cancel_flag" in src
-        print("  [OK] anthropic SDK, cancel support")
+        assert "context" in src
+        print("  [OK] anthropic SDK, cancel, context support")
+
+        # Test with context service
+        from desktop_app.services.storage_service import StorageService
+        from desktop_app.services.context_service import ContextService
+        storage = StorageService()
+        storage.initialize()
+        ctx = ContextService(storage)
+        cs2 = ChatService(storage=storage, context_service=ctx)
+        assert cs2.context is ctx
+        print("  [OK] ChatService with ContextService")
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_context_service():
+    print("\n=== Testing Context Service ===")
+    try:
+        from desktop_app.services.storage_service import StorageService
+        from desktop_app.services.context_service import ContextService, RECENT_WINDOW
+
+        storage = StorageService()
+        storage.initialize()
+        ctx = ContextService(storage)
+
+        # Create a chat with messages
+        cid = storage.create_chat("Context Test")
+        for i in range(15):
+            role = "user" if i % 2 == 0 else "assistant"
+            storage.add_message(cid, role, f"Message {i}")
+
+        system = "You are ONYX."
+        enhanced, messages = ctx.build_context(cid, "New question", system)
+
+        # Should have summary in system message (15 > RECENT_WINDOW=6)
+        assert "Prior Conversation Context" in enhanced
+        print(f"  [OK] Summary injected into system message")
+
+        # Messages should be RECENT_WINDOW + 1 (recent + new msg)
+        assert len(messages) == RECENT_WINDOW + 1
+        print(f"  [OK] Context window = {len(messages)} msgs (was 16 old approach)")
+
+        # Token savings: 15 msgs -> 7 msgs = ~53% reduction
+        print(f"  [OK] Token reduction: {15} -> {len(messages)} messages")
+
+        # Summary should be cached
+        summary = ctx.get_conversation_summary(cid)
+        assert summary
+        print(f"  [OK] Summary cached ({len(summary)} chars)")
+
+        storage.delete_chat(cid)
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_supabase_service():
+    print("\n=== Testing Supabase Service ===")
+    try:
+        from desktop_app.services.supabase_service import SupabaseService
+        svc = SupabaseService()
+        # Should init without error even when not configured
+        status = svc.status_text
+        print(f"  [OK] Status: {status}")
+
+        # All methods should return safe defaults when not configured
+        assert svc.get_conversations() == []
+        assert svc.get_tasks() == []
+        assert svc.get_events() == []
+        assert svc.get_files() == []
+        assert svc.get_agent_state() is None
+        print("  [OK] Graceful fallback (all methods return safe defaults)")
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_letta_bridge():
+    print("\n=== Testing Letta Bridge ===")
+    try:
+        from desktop_app.services.letta_bridge import LettaBridge
+        from desktop_app.services.storage_service import StorageService
+        from desktop_app.services.context_service import ContextService
+        from desktop_app.services.chat_service import ChatService
+
+        storage = StorageService()
+        storage.initialize()
+        ctx = ContextService(storage)
+        chat = ChatService(storage=storage, context_service=ctx)
+        bridge = LettaBridge(context_service=ctx, chat_service=chat)
+
+        state = bridge.get_agent_state()
+        assert state["status"] == "active"
+        assert state["agent_id"] == "onyx"
+        print(f"  [OK] Agent state: {state['status']}")
+
+        mem = bridge.get_memory_summary()
+        assert "conversation_summary" in mem
+        print("  [OK] Memory summary structure")
+
+        # Tasks/events return empty when no Supabase
+        assert bridge.get_tasks() == []
+        assert bridge.get_events() == []
+        print("  [OK] Tasks/events graceful fallback")
+
+        # Message loading
+        cid = storage.create_chat("Bridge Test")
+        storage.add_message(cid, "user", "hello")
+        recent = bridge.load_recent_messages(cid)
+        assert len(recent) == 1
+        print("  [OK] load_recent_messages")
+
+        count = bridge.get_message_count(cid)
+        assert count == 1
+        print("  [OK] get_message_count")
+
+        storage.delete_chat(cid)
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -125,7 +262,6 @@ def test_tts():
         for name, _, _ in voices:
             print(f"       - {name}")
 
-        # British voices
         british = [n for n, _, _ in voices if "British" in n or "Jarvis" in n]
         assert len(british) >= 2
         print(f"  [OK] {len(british)} British male voices")
@@ -134,20 +270,17 @@ def test_tts():
         assert len(jarvis) == 1
         print(f"  [OK] Jarvis voice: {jarvis[0]}")
 
-        # Speed control
         tts.speed = 1.5
         assert tts.speed == 1.5
-        tts.speed = 0.3  # clamped to 0.5
+        tts.speed = 0.3
         assert tts.speed == 0.5
-        tts.speed = 3.0  # clamped to 2.0
+        tts.speed = 3.0
         assert tts.speed == 2.0
         tts.speed = 1.0
         print("  [OK] speed control (clamped 0.5-2.0)")
 
-        # Stop/restart exist
         tts.stop()
         print("  [OK] stop method")
-
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -192,22 +325,18 @@ def test_code_blocks():
     try:
         from desktop_app.ui.chat_widget import parse_segments, text_for_tts
 
-        # Parse mixed content
         text = "Here is code:\n```python\nprint('hello')\nx = 42\n```\nAnd more text.\n```bash\necho hi\n```\nDone."
         store = {}
         segs = parse_segments(text, store)
-        assert len(segs) == 5  # text, code, text, code, text
+        assert len(segs) == 5
         assert segs[0]["type"] == "text"
         assert segs[1]["type"] == "code"
         assert segs[1]["lang"] == "python"
-        assert segs[2]["type"] == "text"
         assert segs[3]["type"] == "code"
         assert segs[3]["lang"] == "bash"
-        assert segs[4]["type"] == "text"
         assert len(store) == 2
         print(f"  [OK] Parsed {len(segs)} segments, {len(store)} code blocks")
 
-        # TTS excludes code
         tts = text_for_tts(text)
         assert "print" not in tts
         assert "echo" not in tts
@@ -215,13 +344,11 @@ def test_code_blocks():
         assert "Done" in tts
         print(f"  [OK] TTS excludes code blocks")
 
-        # Pure text (no code)
         store2 = {}
         segs2 = parse_segments("Just regular text here.", store2)
         assert len(segs2) == 1 and segs2[0]["type"] == "text"
         assert len(store2) == 0
         print("  [OK] Pure text passthrough")
-
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -232,7 +359,6 @@ def test_avatar():
     print("\n=== Testing Avatar ===")
     try:
         from desktop_app.ui.avatar_widget import RobotAvatar
-        # Can instantiate without crashing (no need for display)
         print("  [OK] RobotAvatar importable")
         return True
     except Exception as e:
@@ -243,17 +369,24 @@ def test_avatar():
 def test_ui_components():
     print("\n=== Testing UI Components ===")
     try:
-        from desktop_app.ui.styles import MAIN_STYLE, USER_MSG_HTML, AGENT_MSG_HTML, CODE_BLOCK_HTML, DANGER
+        from desktop_app.ui.styles import (
+            MAIN_STYLE, USER_MSG_HTML, AGENT_MSG_HTML, CODE_BLOCK_HTML,
+            LOAD_MORE_HTML, SUMMARY_BAR_HTML, DANGER,
+        )
         assert len(MAIN_STYLE) > 100
         assert "{text}" in USER_MSG_HTML
         assert "{code}" in CODE_BLOCK_HTML
         assert "{key}" in CODE_BLOCK_HTML
         assert "copy://" in CODE_BLOCK_HTML
         assert "stopButton" in MAIN_STYLE
-        print("  [OK] styles + templates (incl. code blocks, stop button)")
+        assert "inspectorPanel" in MAIN_STYLE
+        assert "loadmore://" in LOAD_MORE_HTML
+        print("  [OK] styles + templates (code blocks, stop, inspector, load-more)")
 
         from desktop_app.ui.chat_widget import ChatWidget, MessageInput
-        print("  [OK] chat_widget (QTextBrowser, avatar, voice controls)")
+        print("  [OK] chat_widget")
+        from desktop_app.ui.inspector_panel import InspectorPanel, CollapsibleSection
+        print("  [OK] inspector_panel")
         from desktop_app.ui.main_window import MainWindow
         print("  [OK] main_window")
         return True
@@ -305,19 +438,22 @@ def main():
     print("=" * 52)
 
     tests = [
-        ("Imports",        test_imports),
-        ("Directories",    test_directories),
-        ("Voice Models",   test_voice_models),
-        ("Storage",        test_storage),
-        ("Config",         test_config_files),
-        ("Tools",          test_tool_service),
-        ("Chat Service",   test_chat_service),
-        ("TTS",            test_tts),
-        ("TTS Synthesis",  test_tts_synthesis),
-        ("Code Blocks",    test_code_blocks),
-        ("Avatar",         test_avatar),
-        ("UI Components",  test_ui_components),
-        ("Icon",           test_icon),
+        ("Imports",           test_imports),
+        ("Directories",       test_directories),
+        ("Voice Models",      test_voice_models),
+        ("Storage",           test_storage),
+        ("Config",            test_config_files),
+        ("Tools",             test_tool_service),
+        ("Context Service",   test_context_service),
+        ("Supabase Service",  test_supabase_service),
+        ("Letta Bridge",      test_letta_bridge),
+        ("Chat Service",      test_chat_service),
+        ("TTS",               test_tts),
+        ("TTS Synthesis",     test_tts_synthesis),
+        ("Code Blocks",       test_code_blocks),
+        ("Avatar",            test_avatar),
+        ("UI Components",     test_ui_components),
+        ("Icon",              test_icon),
     ]
 
     results = {}

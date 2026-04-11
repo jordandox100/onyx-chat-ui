@@ -1,4 +1,4 @@
-"""Main window — sidebar, tray icon, compact toggle"""
+"""Main window — sidebar, inspector panel, tray icon, compact toggle"""
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QListWidget, QLabel, QInputDialog,
@@ -9,6 +9,7 @@ from PySide6.QtGui import QIcon, QAction
 from pathlib import Path
 
 from desktop_app.ui.chat_widget import ChatWidget
+from desktop_app.ui.inspector_panel import InspectorPanel
 from desktop_app.ui.styles import MAIN_STYLE, BG_BASE, BG_DEEP, BORDER, TEXT_SEC, TEXT_MUTED, ACCENT
 from desktop_app.services.storage_service import StorageService
 from desktop_app.utils.logger import get_logger
@@ -19,11 +20,13 @@ ICON_PATH = str(Path(__file__).parent.parent.parent / "install" / "onyx_icon.png
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, bridge=None):
         super().__init__()
-        self.storage = StorageService()
+        self.bridge = bridge
+        self.storage = bridge.chat.storage if (bridge and bridge.chat) else StorageService()
         self.current_chat_id = None
         self.is_compact = False
+        self.inspector_visible = True
         self.init_ui()
         self.init_tray()
         self.load_chats()
@@ -62,19 +65,37 @@ class MainWindow(QMainWindow):
         tl.addStretch()
         main_lay.addWidget(toggle_strip)
 
-        # Splitter: sidebar | chat
+        # Splitter: sidebar | chat | inspector
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self.sidebar_widget = self._build_sidebar()
         self.splitter.addWidget(self.sidebar_widget)
 
-        self.chat_widget = ChatWidget()
+        self.chat_widget = ChatWidget(bridge=self.bridge)
         self.chat_widget.request_refresh_sidebar.connect(self.load_chats)
         self.splitter.addWidget(self.chat_widget)
 
-        self.splitter.setSizes([280, 1120])
+        self.inspector = InspectorPanel(bridge=self.bridge)
+        self.splitter.addWidget(self.inspector)
+
+        self.splitter.setSizes([250, 850, 300])
         self.splitter.setStretchFactor(1, 1)
         main_lay.addWidget(self.splitter)
+
+        # Inspector toggle strip (right side)
+        rtoggle = QWidget()
+        rtoggle.setFixedWidth(28)
+        rtoggle.setStyleSheet(f"background:{BG_BASE}; border-left:1px solid {BORDER};")
+        rt_lay = QVBoxLayout(rtoggle)
+        rt_lay.setContentsMargins(0, 8, 0, 8)
+        rt_lay.setSpacing(4)
+        self.inspector_btn = QPushButton(">")
+        self.inspector_btn.setObjectName("inspectorToggle")
+        self.inspector_btn.setToolTip("Toggle inspector")
+        self.inspector_btn.clicked.connect(self.toggle_inspector)
+        rt_lay.addWidget(self.inspector_btn)
+        rt_lay.addStretch()
+        main_lay.addWidget(rtoggle)
 
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
@@ -186,6 +207,16 @@ class MainWindow(QMainWindow):
             self.resize(700, 500)
         self.is_compact = not self.is_compact
 
+    def toggle_inspector(self):
+        if self.inspector.isVisible():
+            self.inspector.hide()
+            self.inspector_btn.setText("<")
+            self.inspector_btn.setToolTip("Show inspector")
+        else:
+            self.inspector.show()
+            self.inspector_btn.setText(">")
+            self.inspector_btn.setToolTip("Hide inspector")
+
     # ── Chat management ──────────────────────────────────────
 
     def load_chats(self):
@@ -208,6 +239,7 @@ class MainWindow(QMainWindow):
         self.current_chat_id = cid
         msgs = self.storage.get_chat_messages(cid)
         self.chat_widget.load_chat(cid, msgs)
+        self.inspector.set_conversation(cid, title=item.text())
 
     def rename_chat(self):
         cur = self.chat_list.currentItem()

@@ -20,6 +20,7 @@ from desktop_app.ui.avatar_widget import RobotAvatar
 from desktop_app.ui.styles import (
     USER_MSG_HTML, AGENT_MSG_HTML, TOOL_MSG_HTML,
     TYPING_INDICATOR_HTML, ATTACHMENT_HTML, CODE_BLOCK_HTML,
+    LOAD_MORE_HTML, SUMMARY_BAR_HTML,
     BG_DEEP, BG_BASE, BG_SURFACE, BG_RAISED, BORDER,
     TEXT_PRI, TEXT_SEC, TEXT_MUTED, ACCENT, ACCENT_DIM, AGENT_BG,
     DANGER,
@@ -31,6 +32,8 @@ logger = get_logger()
 STREAM_MS = 20
 STREAM_CHARS = 5
 CODE_FENCE_RE = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
+
+DISPLAY_RECENT = 20  # Show last N messages on load (rest via "load older")
 
 
 # ── Custom text input: Enter sends, Shift+Enter newline ──────
@@ -159,12 +162,19 @@ def _esc(text: str) -> str:
 class ChatWidget(QWidget):
     request_refresh_sidebar = Signal()
 
-    def __init__(self):
+    def __init__(self, bridge=None):
         super().__init__()
-        self.chat_service = ChatService()
+        self.bridge = bridge
+
+        if bridge and bridge.chat:
+            self.chat_service = bridge.chat
+            self.storage = bridge.chat.storage
+        else:
+            self.chat_service = ChatService()
+            self.storage = StorageService()
+
         self.voice_service = VoiceService()
         self.tts_service = TTSService()
-        self.storage = StorageService()
 
         self.chat_id = None
         self.chat_thread = None
@@ -174,6 +184,10 @@ class ChatWidget(QWidget):
         self._is_first_message = False
         self._loading_settings = False
         self._code_blocks: dict[str, str] = {}
+
+        # Lazy loading state
+        self._total_msg_count = 0
+        self._displayed_offset = 0
 
         # Streaming state
         self._stream_segments: list[dict] = []
@@ -466,6 +480,8 @@ class ChatWidget(QWidget):
             if key in self._code_blocks:
                 QApplication.clipboard().setText(self._code_blocks[key])
                 logger.info(f"Copied code block {key}")
+        elif url.scheme() == "loadmore":
+            self._load_older_messages()
 
     # ── Chat operations ──────────────────────────────────────
 
@@ -473,13 +489,74 @@ class ChatWidget(QWidget):
         self.chat_id = chat_id
         self.chat_service.switch_chat(chat_id)
 
-    def load_chat(self, chat_id, messages):
+    def load_chat(self, chat_id, messages=None):
+        """Load a conversation with lazy message loading."""
         self.chat_id = chat_id
         self._is_first_message = False
         self._code_blocks.clear()
         self.chat_service.switch_chat(chat_id)
         self.chat_display.clear()
-        for m in messages:
+
+        if messages is None:
+            messages = self.storage.get_chat_messages(chat_id)
+
+        self._total_msg_count = len(messages)
+
+        # Only display last DISPLAY_RECENT messages; show "load older" if more
+        if self._total_msg_count > DISPLAY_RECENT:
+            display_msgs = messages[-DISPLAY_RECENT:]
+            self._displayed_offset = self._total_msg_count - DISPLAY_RECENT
+            older = self._total_msg_count - DISPLAY_RECENT
+            self.chat_display.append(LOAD_MORE_HTML)
+            self.chat_display.append(
+                SUMMARY_BAR_HTML.replace(
+                    "{text}",
+                    f"{older} older message{'s' if older != 1 else ''} hidden"
+                )
+            )
+        else:
+            display_msgs = messages
+            self._displayed_offset = 0
+
+        for m in display_msgs:
+            if m["role"] == "user":
+                self._show_user_msg(m["content"])
+            else:
+                self._show_agent_msg_full(m["content"])
+
+    def _load_older_messages(self):
+        """Load more historical messages and prepend to display."""
+        if not self.chat_id or self._displayed_offset <= 0:
+            return
+
+        page_size = min(DISPLAY_RECENT, self._displayed_offset)
+        new_offset = max(0, self._displayed_offset - page_size)
+        older_msgs = self.storage.get_messages_page(
+            self.chat_id, new_offset, page_size
+        )
+        self._displayed_offset = new_offset
+
+        if not older_msgs:
+            return
+
+        # Re-render: clear and reload with more messages
+        all_msgs = self.storage.get_chat_messages(self.chat_id)
+        start = self._displayed_offset
+        display_msgs = all_msgs[start:]
+
+        self.chat_display.clear()
+        self._code_blocks.clear()
+
+        if self._displayed_offset > 0:
+            self.chat_display.append(LOAD_MORE_HTML)
+            self.chat_display.append(
+                SUMMARY_BAR_HTML.replace(
+                    "{text}",
+                    f"{self._displayed_offset} older messages hidden"
+                )
+            )
+
+        for m in display_msgs:
             if m["role"] == "user":
                 self._show_user_msg(m["content"])
             else:

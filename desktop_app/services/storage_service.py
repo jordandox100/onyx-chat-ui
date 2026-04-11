@@ -218,6 +218,14 @@ class StorageService:
                 FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS summaries (
+                chat_id INTEGER PRIMARY KEY,
+                summary TEXT NOT NULL DEFAULT '',
+                message_count INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
         conn.close()
         logger.info("Database initialized")
@@ -295,3 +303,52 @@ class StorageService:
         messages = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return messages
+
+    def get_messages_page(self, chat_id: int, offset: int = 0,
+                          limit: int = 20) -> List[Dict]:
+        """Paginated message loading for lazy display."""
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM messages WHERE chat_id = ? "
+            "ORDER BY created_at ASC LIMIT ? OFFSET ?",
+            (chat_id, limit, offset),
+        )
+        messages = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return messages
+
+    def get_message_count(self, chat_id: int) -> int:
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id = ?", (chat_id,)
+        )
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+
+    # ── Summaries ─────────────────────────────────────────────
+
+    def get_summary(self, chat_id: int) -> str:
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT summary FROM summaries WHERE chat_id = ?", (chat_id,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else ""
+
+    def save_summary(self, chat_id: int, summary: str, message_count: int):
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO summaries "
+            "(chat_id, summary, message_count, updated_at) "
+            "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+            (chat_id, summary, message_count),
+        )
+        conn.commit()
+        conn.close()

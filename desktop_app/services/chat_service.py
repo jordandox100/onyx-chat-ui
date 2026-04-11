@@ -29,9 +29,10 @@ ANTHROPIC_MODELS = [
 
 
 class ChatService:
-    def __init__(self):
-        self.storage = StorageService()
+    def __init__(self, storage=None, context_service=None):
+        self.storage = storage or StorageService()
         self.tool_service = ToolService()
+        self.context = context_service
         self.api_key = os.getenv("CLAUDE_API_KEY", "").strip()
 
         if not self.api_key:
@@ -74,20 +75,38 @@ class ChatService:
         if self._active_chat_id != chat_id:
             self.switch_chat(chat_id)
 
-        history = self.storage.get_chat_messages(chat_id)
-        messages = self._build_messages(history, message)
+        # Build context: summary + recent window (not full history)
+        if self.context:
+            system_msg, messages = self.context.build_context(
+                chat_id, message, self._system_message
+            )
+        else:
+            # Fallback: old behavior (last 20 messages)
+            history = self.storage.get_chat_messages(chat_id)
+            system_msg = self._system_message
+            messages = self._build_messages_legacy(history, message)
+
         self.storage.add_message(chat_id, "user", message)
 
-        response = await self._send_with_tools(messages, on_tool_output, cancel_flag=cancel_flag)
+        response = await self._send_with_tools(
+            messages, on_tool_output,
+            cancel_flag=cancel_flag, system_message=system_msg,
+        )
 
         if cancel_flag and cancel_flag.is_set():
             return ""
 
         clean = ToolService.strip_tool_tags(response)
         self.storage.add_message(chat_id, "assistant", clean)
+
+        # Update conversation summary if needed
+        if self.context:
+            self.context.maybe_update_summary(chat_id)
+
         return clean
 
-    def _build_messages(self, history, new_message: str) -> list:
+    def _build_messages_legacy(self, history, new_message: str) -> list:
+        """Legacy fallback: last 20 messages. Used only when no context_service."""
         messages = []
         for m in history[-20:]:
             messages.append({"role": m["role"], "content": m["content"]})
@@ -95,11 +114,13 @@ class ChatService:
         return messages
 
     async def _send_with_tools(self, messages: list, on_tool_output=None,
-                                max_rounds: int = 5, cancel_flag=None) -> str:
+                                max_rounds: int = 5, cancel_flag=None,
+                                system_message: str = None) -> str:
+        system = system_message or self._system_message
         response = self._client.messages.create(
             model=self.model_name,
             max_tokens=8192,
-            system=self._system_message,
+            system=system,
             messages=messages,
         )
         text = response.content[0].text
@@ -133,7 +154,7 @@ class ChatService:
             response = self._client.messages.create(
                 model=self.model_name,
                 max_tokens=8192,
-                system=self._system_message,
+                system=system,
                 messages=messages,
             )
             text = response.content[0].text

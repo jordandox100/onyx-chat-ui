@@ -308,6 +308,25 @@ QMenu::item {{
 QMenu::item:selected {{
     background-color: {BG_HOVER};
 }}
+
+/* ── Inspector panel ──────────────────────── */
+#inspectorPanel {{
+    background-color: {BG_DEEP};
+    border-left: 1px solid {BORDER};
+}}
+
+#inspectorToggle {{
+    background: transparent;
+    color: {TEXT_SEC};
+    border: none;
+    font-size: 16px;
+    padding: 4px 8px;
+    min-width: 28px;
+    max-width: 28px;
+}}
+#inspectorToggle:hover {{
+    color: {ACCENT};
+}}
 """
 
 # ── HTML templates for chat messages ─────────────────────────
@@ -377,4 +396,22 @@ CODE_BLOCK_HTML = """
 </td>
 </tr>
 </table>
+"""
+
+LOAD_MORE_HTML = f"""
+<div style="text-align:center; padding:10px; margin:4px 0;">
+    <a href="loadmore://older" style="color:{ACCENT}; text-decoration:none;
+       font-size:11px; padding:6px 20px; border:1px solid {BORDER};
+       border-radius:4px; letter-spacing:1px;">
+       LOAD OLDER MESSAGES
+    </a>
+</div>
+"""
+
+SUMMARY_BAR_HTML = f"""
+<div style="text-align:center; padding:6px; margin:4px 40px;
+            background:{BG_SURFACE}; border:1px solid {BORDER};
+            border-radius:6px; font-size:11px; color:{TEXT_MUTED};">
+    {{text}}
+</div>
 """
