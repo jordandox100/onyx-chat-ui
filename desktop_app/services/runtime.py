@@ -47,8 +47,9 @@ MAX_TOOL_ROUNDS = 3
 class OnyxRuntime:
     """Supabase state + direct Anthropic calls + conditional tool attachment."""
 
-    def __init__(self, supabase=None):
+    def __init__(self, supabase=None, storage=None):
         self.supabase = supabase
+        self.storage = storage
         self._client = None
         self._model = DEFAULT_MODEL
         self._configured = False

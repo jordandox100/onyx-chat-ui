@@ -1,69 +1,54 @@
-# ONYX — Supabase + Anthropic Runtime, Conditional Tools
+# ONYX — Supabase + Anthropic, Auth, Safety Filter, Shared Folders
 
 ## Architecture
 ```
-User -> UI -> ChatService -> OnyxRuntime -> [Router] -> Anthropic API
-                  |               |                        |
-             SQLite (mirror)  Supabase         tools (only when needed)
+Login -> PySide6 UI -> ChatService -> [Safety Filter] -> [Router] -> Anthropic
+              |                                              |
+         SQLite (mirror)                              Supabase (state)
 ```
 
-## Normal Turn (no tools — default, cheapest)
-```
-Input:
-  system: persona + summary + goals + beliefs + memories (~800 tokens)
-  messages: last 6 only (~3000 tokens)
-  tools: NONE
-  Total: ~4000 tokens
+## Auth
+- Supabase `users` table with bcrypt-hashed passwords
+- Admin: onyxadmin / Gem266726!
+- Admin can: view all users, access all data, delete anything, bypass safety filter
+- Regular users: private data, blocked key phrases
 
-Output:
-  direct text response
-```
+## Safety Filter Pipeline
+1. Normalize (lowercase, unicode, leetspeak, collapse whitespace)
+2. Exact phrase blocklist (130+ phrases)
+3. N-gram/substring scan (danger terms)
+4. Fuzzy similarity (SequenceMatcher, 85% threshold)
+5. Spaced evasion detection (g h o s t g u n)
+Admin bypasses all filters.
 
-## Tool Turn (only when request requires it)
-```
-1. Router classifies request (heuristic, zero-cost)
-2. Selects minimal bundle:
-   - direct_answer -> no tools (default)
-   - web_lookup    -> [web_search] (1 tool)
-   - memory_lookup -> [memory_search] (1 tool)
-   - file_lookup   -> [file_read, file_search] (2 tools)
-   - code_work     -> [file_read, file_write, shell_exec] (3 tools)
-   - multi_tool    -> minimal combination (4 tools max)
-3. Anthropic call includes only selected tools
-4. Tool calls executed, results fed back (max 3 rounds)
-```
+## Shared Folders
+- Create by entering another user's username
+- Both users can read/add items
+- Only the adder can delete their own items
+- Admin can delete anything
+
+## Config Files (Onyx/config/)
+- personality.txt, knowledgebase.txt, user.txt, instructions.txt
+- Feed into runtime system prompt
+- Admin-editable
 
 ## Env Vars
 ```
 ANTHROPIC_API_KEY=    # REQUIRED
-SUPABASE_URL=         # Persistent memory
-SUPABASE_ANON_KEY=    # Persistent memory
+SUPABASE_URL=         # Auth + persistent state
+SUPABASE_ANON_KEY=    # Auth + persistent state
 ```
 
 ## Files
 ```
 desktop_app/services/
-  runtime.py          # OnyxRuntime: router + direct/tool execution paths
-  tool_router.py      # Heuristic classifier + minimal bundles
-  tool_executor.py    # Real tool implementations (shell, file, memory, web)
-  chat_service.py     # Thin relay: UI -> runtime -> SQLite mirror
-  storage_service.py  # Local SQLite (display mirror + settings)
-  supabase_service.py # Cloud: conversations, messages, memories, beliefs, goals, tasks, events, files
-  voice_service.py    # Whisper STT
-  tts_service.py      # Piper TTS
+  runtime.py, chat_service.py, storage_service.py, supabase_service.py
+  auth_service.py, safety_filter.py, shared_service.py
+  tool_router.py, tool_executor.py
+  voice_service.py, tts_service.py
 desktop_app/ui/
-  main_window.py      # 3-panel: sidebar | chat | inspector
-  chat_widget.py      # Chat display, lazy loading, voice
-  inspector_panel.py  # Agent state, summary, goals, beliefs, tasks, events, files, memories
-  avatar_widget.py    # Animated robot
-  styles.py           # Dark theme
+  main_window.py, chat_widget.py, inspector_panel.py
+  login_dialog.py, avatar_widget.py, styles.py
 ```
-
-## What Was Removed
-- letta_bridge.py — DELETED
-- letta-client — removed from requirements
-- LETTA_* env vars — removed
-- All always-on tool attachment — NONE by default
-- Transcript replay — max 6 messages
 
 ## 11/11 Tests Passing

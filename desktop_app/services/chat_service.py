@@ -1,10 +1,10 @@
 """Chat service — relay between UI and OnyxRuntime.
 
+Integrates safety filter (blocks prohibited content before model call).
 Mirrors messages to local SQLite for UI display.
-The runtime handles: Anthropic calls, Supabase state, compact prompts.
-No Letta. No transcript replay.
 """
 from desktop_app.services.storage_service import StorageService
+from desktop_app.services.safety_filter import is_blocked, BLOCK_MESSAGE
 from desktop_app.utils.logger import get_logger
 
 logger = get_logger()
@@ -33,9 +33,13 @@ class ChatService:
     def __init__(self, storage=None, runtime=None):
         self.storage = storage or StorageService()
         self.runtime = runtime
+        self._is_admin = False
         settings = self.storage.get_settings()
         self.model_name = settings.get("model", {}).get("name", "claude-sonnet-4-6")
         self._active_chat_id = None
+
+    def set_admin(self, is_admin: bool):
+        self._is_admin = is_admin
 
     @property
     def runtime_name(self) -> str:
@@ -63,6 +67,12 @@ class ChatService:
 
         # Mirror user message locally
         self.storage.add_message(chat_id, "user", message)
+
+        # Safety filter (admin bypasses)
+        if not self._is_admin and is_blocked(message):
+            logger.warning("[safety] message blocked")
+            self.storage.add_message(chat_id, "assistant", BLOCK_MESSAGE)
+            return BLOCK_MESSAGE
 
         if not (self.runtime and self.runtime.available):
             error_msg = (
