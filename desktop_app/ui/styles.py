@@ -330,25 +330,28 @@ QMenu::item:selected {{
 """
 
 # ── HTML templates for chat messages ─────────────────────────
-USER_MSG_HTML = """
-<div style="margin:8px 48px 8px 120px; padding:12px 16px;
-            background-color:{user_bg}; border:1px solid {user_border};
-            border-radius:12px 12px 2px 12px;">
-    <span style="color:{accent}; font-weight:700; font-size:11px;
-                 text-transform:uppercase; letter-spacing:1px;">You</span><br>
-    <span style="color:#e4e8ee; font-size:14px; line-height:1.5;">{text}</span>
-</div>
-""".replace("{user_bg}", USER_BG).replace("{user_border}", USER_BORDER).replace("{accent}", ACCENT)
+# User = RIGHT aligned, green/teal bubble
+# Agent = LEFT aligned, blue/cyan bubble
 
-AGENT_MSG_HTML = """
-<div style="margin:8px 120px 8px 0; padding:12px 16px;
-            background-color:{agent_bg}; border-left:3px solid {agent_border};
-            border-radius:2px 12px 12px 12px;">
-    <span style="color:{accent}; font-weight:700; font-size:11px;
-                 text-transform:uppercase; letter-spacing:1px;">ONYX</span><br>
-    <span style="color:#e4e8ee; font-size:14px; line-height:1.5;">{text}</span>
+USER_MSG_HTML = f"""
+<div style="margin:10px 12px 10px 140px; padding:12px 16px;
+            background-color:#0a2e1e; border:1px solid #166534;
+            border-radius:14px 14px 4px 14px; text-align:right;">
+    <span style="color:#4ade80; font-weight:700; font-size:10px;
+                 text-transform:uppercase; letter-spacing:2px;">YOU</span><br>
+    <span style="color:#e4e8ee; font-size:14px; line-height:1.6;">{{text}}</span>
 </div>
-""".replace("{agent_bg}", AGENT_BG).replace("{agent_border}", AGENT_BORDER).replace("{accent}", ACCENT)
+"""
+
+AGENT_MSG_HTML = f"""
+<div style="margin:10px 140px 10px 12px; padding:12px 16px;
+            background-color:{AGENT_BG}; border-left:3px solid {ACCENT};
+            border-radius:4px 14px 14px 14px;">
+    <span style="color:{ACCENT}; font-weight:700; font-size:10px;
+                 text-transform:uppercase; letter-spacing:2px;">ONYX</span><br>
+    <span style="color:#e4e8ee; font-size:14px; line-height:1.6;">{{text}}</span>
+</div>
+"""
 
 TOOL_MSG_HTML = """
 <div style="margin:4px 120px 4px 24px; padding:8px 12px;

@@ -126,6 +126,25 @@ create table if not exists shared_items (
   created_at timestamptz default now()
 );
 
+-- Subscriptions
+create table if not exists subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  username text not null,
+  tier text not null default 'free',
+  active boolean default true,
+  token_balance int default 0,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- Message usage tracking (for daily limits)
+create table if not exists message_usage (
+  id uuid primary key default gen_random_uuid(),
+  username text not null,
+  date text not null,
+  created_at timestamptz default now()
+);
+
 -- Indexes
 create index if not exists idx_users_username on users(username);
 create index if not exists idx_messages_conversation on messages(conversation_id);

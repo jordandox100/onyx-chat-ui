@@ -25,12 +25,13 @@ ICON_PATH = str(Path(__file__).parent.parent.parent / "install" / "onyx_icon.png
 
 class MainWindow(QMainWindow):
     def __init__(self, runtime=None, chat_service=None, supabase=None,
-                 auth=None, shared=None, username="local"):
+                 auth=None, shared=None, subs=None, username="local"):
         super().__init__()
         self.runtime = runtime
         self.supabase = supabase
         self.auth = auth
         self.shared = shared
+        self.subs = subs
         self.username = username
         self._chat_service = chat_service
         self.storage = chat_service.storage if chat_service else StorageService()
@@ -179,6 +180,52 @@ class MainWindow(QMainWindow):
         )
         logout_btn.clicked.connect(self._logout)
         lay.addWidget(logout_btn)
+
+        # Subscription status
+        self.sub_frame = QFrame()
+        self.sub_frame.setStyleSheet(
+            f"background:{BG_SURFACE}; border:1px solid {BORDER}; border-radius:6px;"
+        )
+        sf_lay = QVBoxLayout(self.sub_frame)
+        sf_lay.setContentsMargins(8, 6, 8, 6)
+        sf_lay.setSpacing(4)
+        self.tier_label = QLabel("...")
+        self.tier_label.setStyleSheet(f"color:{ACCENT}; font-size:12px; font-weight:700;")
+        sf_lay.addWidget(self.tier_label)
+        self.token_label = QLabel("")
+        self.token_label.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10px;")
+        sf_lay.addWidget(self.token_label)
+
+        up_row = QHBoxLayout()
+        up_row.setSpacing(4)
+        pro_btn = QPushButton("Pro $19.99")
+        pro_btn.setStyleSheet(
+            f"background:transparent; color:{SUCCESS}; border:1px solid {SUCCESS};"
+            f" border-radius:4px; padding:4px 6px; font-size:10px;"
+        )
+        pro_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        pro_btn.clicked.connect(lambda: self._upgrade("pro"))
+        up_row.addWidget(pro_btn)
+        builder_btn = QPushButton("Builder $34.99")
+        builder_btn.setStyleSheet(
+            f"background:transparent; color:#f59e0b; border:1px solid #f59e0b;"
+            f" border-radius:4px; padding:4px 6px; font-size:10px;"
+        )
+        builder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        builder_btn.clicked.connect(lambda: self._upgrade("builder"))
+        up_row.addWidget(builder_btn)
+        sf_lay.addLayout(up_row)
+
+        tokens_btn = QPushButton("Buy Tokens")
+        tokens_btn.setStyleSheet(
+            f"background:transparent; color:{TEXT_SEC}; border:1px solid {BORDER};"
+            f" border-radius:4px; padding:4px; font-size:10px;"
+        )
+        tokens_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        tokens_btn.clicked.connect(self._buy_tokens)
+        sf_lay.addWidget(tokens_btn)
+        lay.addWidget(self.sub_frame)
+        self._refresh_sub_display()
 
         return sidebar
 
@@ -425,7 +472,63 @@ class MainWindow(QMainWindow):
         view_btn.clicked.connect(lambda: self._view_user_data(user_list))
         lay.addWidget(view_btn)
 
+        # Subscription management
+        sub_row = QHBoxLayout()
+        sub_pro = QPushButton("Set Pro")
+        sub_pro.setStyleSheet(
+            f"background:{SUCCESS}; color:{BG_DEEP}; border:none;"
+            f" border-radius:4px; padding:6px; font-size:11px; font-weight:700;"
+        )
+        sub_pro.clicked.connect(lambda: self._admin_set_sub(user_list, "pro"))
+        sub_row.addWidget(sub_pro)
+
+        sub_builder = QPushButton("Set Builder")
+        sub_builder.setStyleSheet(
+            f"background:#f59e0b; color:{BG_DEEP}; border:none;"
+            f" border-radius:4px; padding:6px; font-size:11px; font-weight:700;"
+        )
+        sub_builder.clicked.connect(lambda: self._admin_set_sub(user_list, "builder"))
+        sub_row.addWidget(sub_builder)
+
+        sub_free = QPushButton("Set Free")
+        sub_free.setStyleSheet(
+            f"background:{TEXT_MUTED}; color:{BG_DEEP}; border:none;"
+            f" border-radius:4px; padding:6px; font-size:11px; font-weight:700;"
+        )
+        sub_free.clicked.connect(lambda: self._admin_set_sub(user_list, "free"))
+        sub_row.addWidget(sub_free)
+
+        add_tok = QPushButton("+500 Tokens")
+        add_tok.setStyleSheet(
+            f"background:{ACCENT}; color:{BG_DEEP}; border:none;"
+            f" border-radius:4px; padding:6px; font-size:11px; font-weight:700;"
+        )
+        add_tok.clicked.connect(lambda: self._admin_add_tokens(user_list, 500))
+        sub_row.addWidget(add_tok)
+        lay.addLayout(sub_row)
+
         dlg.exec()
+
+    def _admin_set_sub(self, user_list, tier):
+        cur = user_list.currentItem()
+        if not cur: return
+        u = cur.data(Qt.ItemDataRole.UserRole)
+        uname = u.get("username", "?")
+        if self.subs and self.subs.set_subscription(uname, tier):
+            QMessageBox.information(self, "Done", f"{uname} set to {tier.upper()}")
+            self._refresh_sub_display()
+        else:
+            QMessageBox.warning(self, "Error", "Failed to update subscription")
+
+    def _admin_add_tokens(self, user_list, amount):
+        cur = user_list.currentItem()
+        if not cur: return
+        u = cur.data(Qt.ItemDataRole.UserRole)
+        uname = u.get("username", "?")
+        if self.subs and self.subs.add_tokens(uname, amount):
+            QMessageBox.information(self, "Done", f"Added {amount} tokens to {uname}")
+        else:
+            QMessageBox.warning(self, "Error", "Failed (user may need Builder tier first)")
 
     def _view_user_data(self, user_list):
         cur = user_list.currentItem()
@@ -479,3 +582,61 @@ class MainWindow(QMainWindow):
             self.auth.logout()
         self.tray_icon.hide()
         QApplication.quit()
+
+    # ── Subscription ──────────────────────────────────────────
+
+    def _refresh_sub_display(self):
+        if not self.subs:
+            self.tier_label.setText("FREE")
+            return
+        tier = self.subs.get_user_tier(self.username)
+        names = {"free": "FREE (5 msgs/day)", "pro": "PRO", "builder": "BUILDER"}
+        self.tier_label.setText(names.get(tier, tier.upper()))
+        if tier == "builder":
+            bal = self.subs.get_token_balance(self.username)
+            self.token_label.setText(f"Tokens: {bal}")
+            self.token_label.show()
+        else:
+            self.token_label.hide()
+
+    def _upgrade(self, tier):
+        if not self.subs:
+            QMessageBox.warning(self, "Error", "Subscriptions not configured")
+            return
+        url = self.subs.create_checkout_link(self.username, tier=tier)
+        if url:
+            QMessageBox.information(
+                self, "Payment",
+                f"Payment page opened in your browser.\n\n"
+                f"After payment, contact admin to activate your {tier.upper()} subscription."
+            )
+        else:
+            QMessageBox.warning(
+                self, "Error",
+                "Could not create payment link. Check Square configuration."
+            )
+
+    def _buy_tokens(self):
+        if not self.subs:
+            return
+        tier = self.subs.get_user_tier(self.username)
+        if tier != "builder":
+            QMessageBox.information(
+                self, "Tokens",
+                "Token purchases are available for Builder subscribers."
+            )
+            return
+        from desktop_app.services.subscription_service import TOKEN_PACKS
+        items = [f"{p['label']} — {p['price_display']}" for p in TOKEN_PACKS]
+        choice, ok = QInputDialog.getItem(
+            self, "Buy Tokens", "Select token pack:", items, editable=False
+        )
+        if not ok:
+            return
+        idx = items.index(choice)
+        url = self.subs.create_checkout_link(self.username, token_pack_idx=idx)
+        if url:
+            QMessageBox.information(
+                self, "Payment",
+                "Payment page opened. Tokens will be added after admin confirms payment."
+            )

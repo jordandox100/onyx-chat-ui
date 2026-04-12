@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ONYX entry point — auth, Supabase state, Anthropic runtime, PySide6 UI."""
+"""ONYX entry point — auth, subscriptions, Supabase, Anthropic runtime."""
 import sys
 import os
 from pathlib import Path
@@ -16,6 +16,7 @@ from desktop_app.services.runtime import OnyxRuntime
 from desktop_app.services.chat_service import ChatService
 from desktop_app.services.auth_service import AuthService
 from desktop_app.services.shared_service import SharedService
+from desktop_app.services.subscription_service import SubscriptionService
 from desktop_app.ui.login_dialog import LoginDialog
 from desktop_app.ui.main_window import MainWindow
 
@@ -32,10 +33,10 @@ def main():
     supabase = SupabaseService()
     auth = AuthService(supabase=supabase)
     shared = SharedService(supabase=supabase)
+    subs = SubscriptionService(supabase=supabase)
     runtime = OnyxRuntime(supabase=supabase, storage=storage)
     chat_service = ChatService(storage=storage, runtime=runtime)
 
-    # Seed admin account
     if supabase.available:
         auth.seed_admin()
 
@@ -44,32 +45,28 @@ def main():
     app.setOrganizationName("ONYX")
     app.setStyle("Fusion")
 
-    # Show login dialog
+    # Login
     if supabase.available:
         login = LoginDialog(auth)
         if login.exec() != LoginDialog.DialogCode.Accepted:
-            logger.info("Login cancelled")
             sys.exit(0)
         username = auth.username
         is_admin = auth.is_admin
-        logger.info(f"Logged in as: {username} (admin={is_admin})")
     else:
         username = "local"
         is_admin = False
-        logger.warning("Supabase not available — running in local mode (no auth)")
 
     chat_service.set_admin(is_admin)
+    chat_service.set_user(username, subs)
 
     window = MainWindow(
         runtime=runtime, chat_service=chat_service, supabase=supabase,
-        auth=auth, shared=shared, username=username,
+        auth=auth, shared=shared, subs=subs, username=username,
     )
     window.show()
 
-    logger.info(
-        f"ONYX ready — user={username}, admin={is_admin}, "
-        f"runtime={chat_service.runtime_name}, supabase={supabase.status_text}"
-    )
+    tier = subs.get_user_tier(username)
+    logger.info(f"ONYX ready — user={username}, tier={tier}, admin={is_admin}")
     sys.exit(app.exec())
 
 if __name__ == "__main__":

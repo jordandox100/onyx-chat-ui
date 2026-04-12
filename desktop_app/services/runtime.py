@@ -98,8 +98,10 @@ class OnyxRuntime:
 
     def send_message(self, text: str, conversation_id: int,
                      user_id: str = "local",
-                     local_messages: list = None) -> dict:
-        """Route, optionally attach tools, call model, return response."""
+                     local_messages: list = None,
+                     allowed_tools: list = None,
+                     username: str = "local") -> dict:
+        """Route, optionally attach tools (filtered by subscription), call model."""
         if not self.available:
             return {"response": f"[Runtime not ready: {self.status_detail}]",
                     "route": "error", "tools_used": [], "usage": {}}
@@ -108,8 +110,14 @@ class OnyxRuntime:
         route = classify_tool_need(text)
         tools = select_tool_bundle(route)
 
+        # Filter tools by subscription tier
+        if allowed_tools is not None and tools:
+            tools = [t for t in tools if t["name"] in allowed_tools]
+            if not tools:
+                route = ROUTE_DIRECT
+
         # Step 2: Build compact context
-        system = self._build_system_prompt(conversation_id, user_id)
+        system = self._build_system_prompt(conversation_id, username)
         messages = self._build_messages(conversation_id, text, local_messages)
 
         logger.info(
