@@ -288,3 +288,98 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"supabase upsert_agent_state: {e}")
             return False
+
+    # ── Memories ──────────────────────────────────────────────
+
+    def add_memory(self, content: str, user_id: str = "local",
+                   conv_id: str = None, memory_type: str = "fact") -> Optional[Dict]:
+        if not self.available:
+            return None
+        try:
+            row = {"content": content, "user_id": user_id,
+                   "memory_type": memory_type}
+            if conv_id:
+                row["conversation_id"] = conv_id
+            result = self._client.table("memories").insert(row).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"supabase add_memory: {e}")
+            return None
+
+    def get_memories(self, user_id: str = "local", limit: int = 10) -> List[Dict]:
+        if not self.available:
+            return []
+        try:
+            result = (self._client.table("memories").select("*")
+                      .eq("user_id", user_id)
+                      .order("created_at", desc=True).limit(limit).execute())
+            return result.data or []
+        except Exception as e:
+            logger.error(f"supabase get_memories: {e}")
+            return []
+
+    # ── Beliefs ───────────────────────────────────────────────
+
+    def add_belief(self, content: str, confidence: float = 0.8,
+                   user_id: str = "local") -> Optional[Dict]:
+        if not self.available:
+            return None
+        try:
+            result = self._client.table("beliefs").insert({
+                "content": content, "confidence": confidence,
+                "user_id": user_id,
+            }).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"supabase add_belief: {e}")
+            return None
+
+    def get_beliefs(self, user_id: str = "local") -> List[Dict]:
+        if not self.available:
+            return []
+        try:
+            result = (self._client.table("beliefs").select("*")
+                      .eq("user_id", user_id)
+                      .order("confidence", desc=True).limit(15).execute())
+            return result.data or []
+        except Exception as e:
+            logger.error(f"supabase get_beliefs: {e}")
+            return []
+
+    # ── Goals ─────────────────────────────────────────────────
+
+    def add_goal(self, title: str, user_id: str = "local",
+                 status: str = "active") -> Optional[Dict]:
+        if not self.available:
+            return None
+        try:
+            result = self._client.table("goals").insert({
+                "title": title, "user_id": user_id, "status": status,
+            }).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"supabase add_goal: {e}")
+            return None
+
+    def get_goals(self, user_id: str = "local") -> List[Dict]:
+        if not self.available:
+            return []
+        try:
+            result = (self._client.table("goals").select("*")
+                      .eq("user_id", user_id)
+                      .order("created_at", desc=True).limit(10).execute())
+            return result.data or []
+        except Exception as e:
+            logger.error(f"supabase get_goals: {e}")
+            return []
+
+    def update_goal(self, goal_id: str, **fields) -> bool:
+        if not self.available:
+            return False
+        try:
+            fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._client.table("goals").update(fields).eq("id", goal_id).execute()
+            return True
+        except Exception as e:
+            logger.error(f"supabase update_goal: {e}")
+            return False

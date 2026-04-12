@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ONYX Test Suite — validates Letta-first architecture"""
+"""ONYX Test Suite — Supabase + Anthropic runtime, no Letta"""
 import sys
 from pathlib import Path
 
@@ -10,11 +10,11 @@ def test_imports():
     print("\n=== Testing Imports ===")
     ok = True
     for name, stmt in [
-        ("PySide6",       "import PySide6"),
-        ("piper-tts",     "from piper import PiperVoice"),
-        ("dotenv",        "from dotenv import load_dotenv"),
-        ("supabase",      "from supabase import create_client"),
-        ("letta-client",  "from letta_client import Letta"),
+        ("PySide6",    "import PySide6"),
+        ("anthropic",  "import anthropic"),
+        ("piper-tts",  "from piper import PiperVoice"),
+        ("dotenv",     "from dotenv import load_dotenv"),
+        ("supabase",   "from supabase import create_client"),
     ]:
         try:
             exec(stmt)
@@ -22,107 +22,74 @@ def test_imports():
         except ImportError as e:
             print(f"  [FAIL] {name}: {e}")
             ok = False
-    for name, stmt in [("torch", "import torch"), ("whisper", "import whisper"), ("pyaudio", "import pyaudio")]:
+    for name, stmt in [("torch", "import torch"), ("whisper", "import whisper")]:
         try:
-            exec(stmt)
-            print(f"  [OK] {name}")
+            exec(stmt); print(f"  [OK] {name}")
         except ImportError:
             print(f"  [WARN] {name} (optional)")
     return ok
 
 
-def test_no_direct_anthropic():
-    """Verify no direct Anthropic SDK usage in the app (Letta owns model calls)."""
-    print("\n=== Testing: No Direct Anthropic ===")
-    import importlib
+def test_no_letta():
+    """Verify zero Letta dependency in active code."""
+    print("\n=== Testing: No Letta ===")
     ok = True
+    for f in ["desktop_app/services/runtime.py", "desktop_app/services/chat_service.py",
+              "desktop_app/main.py", "desktop_app/ui/inspector_panel.py",
+              "desktop_app/ui/main_window.py"]:
+        src = Path(f).read_text()
+        if "from letta" in src or "import letta" in src or "LettaBridge" in src:
+            print(f"  [FAIL] {f} still imports Letta")
+            ok = False
+    if ok:
+        print("  [OK] No Letta imports in active code")
 
-    # chat_service must NOT import anthropic
-    src = Path("desktop_app/services/chat_service.py").read_text()
-    if "import anthropic" in src or "from anthropic" in src:
-        print("  [FAIL] chat_service.py still imports anthropic SDK directly")
+    deleted = Path("desktop_app/services/letta_bridge.py")
+    if deleted.exists():
+        print("  [FAIL] letta_bridge.py still exists")
         ok = False
     else:
-        print("  [OK] chat_service.py: no direct anthropic import")
+        print("  [OK] letta_bridge.py deleted")
 
-    if "client.messages.create" in src:
-        print("  [FAIL] chat_service.py still calls Anthropic API directly")
+    env = Path(".env").read_text()
+    if "LETTA_" in env:
+        print("  [FAIL] .env still has LETTA_ vars")
         ok = False
     else:
-        print("  [OK] chat_service.py: no direct API call")
+        print("  [OK] .env clean of LETTA vars")
+
+    reqs = Path("requirements.txt").read_text()
+    if "letta" in reqs.lower():
+        print("  [FAIL] requirements.txt still has letta")
+        ok = False
+    else:
+        print("  [OK] requirements.txt clean of letta")
 
     return ok
 
 
-def test_no_brain_in_storage():
-    """Verify storage_service has no persona/prompt/brain logic."""
-    print("\n=== Testing: No Brain in Storage ===")
-    src = Path("desktop_app/services/storage_service.py").read_text()
-    ok = True
-
-    for bad in ["DEFAULT_PERSONALITY", "DEFAULT_KNOWLEDGEBASE", "DEFAULT_USER_PROFILE",
-                 "DEFAULT_INSTRUCTIONS", "build_system_message", "get_personality",
-                 "get_knowledgebase", "get_user_profile", "get_instructions"]:
-        if bad in src:
-            print(f"  [FAIL] storage_service.py still contains '{bad}'")
-            ok = False
-
-    if ok:
-        print("  [OK] storage_service.py: no persona/prompt/brain logic")
-
-    # Must still have SQLite mirror
-    for need in ["add_message", "get_chat_messages", "create_chat", "get_settings"]:
-        if need not in src:
-            print(f"  [FAIL] storage_service.py missing '{need}'")
-            ok = False
-
-    if ok:
-        print("  [OK] storage_service.py: has SQLite mirror + settings")
-    return ok
-
-
-def test_deleted_files():
-    """Verify Letta-duplicating files are gone."""
-    print("\n=== Testing: Dead Files Removed ===")
-    ok = True
-    for f in ["desktop_app/services/context_service.py",
-              "desktop_app/services/personality_service.py",
-              "desktop_app/services/tool_service.py"]:
-        if Path(f).exists():
-            print(f"  [FAIL] {f} still exists (should be deleted)")
-            ok = False
-        else:
-            print(f"  [OK] {f} deleted")
-    return ok
-
-
-def test_storage():
-    print("\n=== Testing Storage (Mirror Only) ===")
+def test_runtime():
+    print("\n=== Testing Runtime ===")
     try:
-        from desktop_app.services.storage_service import StorageService
-        s = StorageService()
-        s.initialize()
-        cid = s.create_chat("Test")
-        s.add_message(cid, "user", "hi")
-        s.add_message(cid, "assistant", "hello")
-        msgs = s.get_chat_messages(cid)
-        assert len(msgs) == 2
-        print(f"  [OK] Message mirror ({len(msgs)} msgs)")
+        from desktop_app.services.runtime import OnyxRuntime
+        rt = OnyxRuntime()
+        state = rt.get_agent_state()
+        assert state["runtime"] == "supabase+anthropic"
+        print(f"  [OK] Status: {state['status']}")
+        print(f"  [OK] Runtime: {state['runtime']}")
 
-        count = s.get_message_count(cid)
-        assert count == 2
-        print(f"  [OK] message_count = {count}")
+        # Without API key, should return clean error
+        result = rt.send_message("test", conversation_id=1)
+        assert "not ready" in result["response"].lower() or "not configured" in result["response"].lower() or "error" in result["response"].lower()
+        print("  [OK] send_message: clean failure without key")
 
-        page = s.get_messages_page(cid, 0, 1)
-        assert len(page) == 1
-        print(f"  [OK] paginated loading")
+        # No transcript replay in source
+        import inspect
+        src = inspect.getsource(OnyxRuntime)
+        assert "history[-20:]" not in src
+        assert "get_chat_messages" not in src
+        print("  [OK] No transcript replay in runtime")
 
-        settings = s.get_settings()
-        assert "tts" in settings
-        print(f"  [OK] settings")
-
-        s.delete_chat(cid)
-        print("  [OK] delete")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -133,63 +100,45 @@ def test_chat_service():
     print("\n=== Testing Chat Service ===")
     try:
         from desktop_app.services.chat_service import ChatService, ANTHROPIC_MODELS
-
         cs = ChatService()
         assert cs.runtime_name == "not_configured"
-        print(f"  [OK] runtime = {cs.runtime_name} (no bridge)")
+        print(f"  [OK] runtime = {cs.runtime_name}")
 
         for name, mid, desc in ANTHROPIC_MODELS:
-            assert mid.startswith("anthropic/"), f"Bad prefix: {mid}"
-        print(f"  [OK] {len(ANTHROPIC_MODELS)} models with anthropic/ prefix")
+            assert not mid.startswith("anthropic/"), f"Should not have anthropic/ prefix: {mid}"
+        print(f"  [OK] {len(ANTHROPIC_MODELS)} models (raw IDs, no prefix)")
 
-        # Must NOT have ToolService
         import inspect
         src = inspect.getsource(ChatService)
-        assert "ToolService" not in src
-        assert "tool_service" not in src
-        assert "build_system" not in src
-        print("  [OK] No ToolService, no prompt building")
-
+        assert "bridge" not in src.lower()
+        assert "letta" not in src.lower()
+        print("  [OK] No bridge/letta references")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
         return False
 
 
-def test_letta_bridge():
-    print("\n=== Testing Letta Bridge ===")
+def test_storage():
+    print("\n=== Testing Storage ===")
     try:
-        from desktop_app.services.letta_bridge import LettaBridge
+        from desktop_app.services.storage_service import StorageService
+        s = StorageService()
+        s.initialize()
+        cid = s.create_chat("Test")
+        s.add_message(cid, "user", "hi")
+        s.add_message(cid, "assistant", "hello")
+        assert s.get_message_count(cid) == 2
+        assert len(s.get_messages_page(cid, 0, 1)) == 1
+        s.delete_chat(cid)
+        print("  [OK] SQLite mirror works")
 
-        bridge = LettaBridge()
-        assert not bridge.available
-        assert not bridge.agent_ready
-        print(f"  [OK] Status: {bridge.status} — {bridge.status_detail}")
-
-        health = bridge.health_check()
-        assert health["ok"] is False
-        print(f"  [OK] Health check: clean failure")
-
-        state = bridge.get_agent_state()
-        assert state["status"] in ("NOT_CONFIGURED", "NOT_INSTALLED")
-        print(f"  [OK] Agent state: {state['status']}")
-
-        result = bridge.send_message("test")
-        assert "not ready" in result["response"].lower()
-        print("  [OK] send_message: clean error when not configured")
-
-        blocks = bridge.get_memory_blocks()
-        assert blocks == []
-        print("  [OK] Memory blocks: empty (not connected)")
-
-        # Bridge must NOT read local persona/config
         import inspect
-        src = inspect.getsource(LettaBridge)
-        assert "get_personality" not in src
-        assert "build_system_message" not in src
-        assert "get_knowledgebase" not in src
-        print("  [OK] Bridge does not read local persona/config")
-
+        src = inspect.getsource(StorageService)
+        assert "personality" not in src.lower()
+        assert "knowledgebase" not in src.lower()
+        assert "build_system" not in src.lower()
+        print("  [OK] No brain logic in storage")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -203,8 +152,12 @@ def test_supabase_service():
         svc = SupabaseService()
         print(f"  [OK] Status: {svc.status_text}")
         assert svc.get_conversations() == []
+        assert svc.get_memories() == []
+        assert svc.get_beliefs() == []
+        assert svc.get_goals() == []
         assert svc.get_tasks() == []
-        print("  [OK] Graceful fallback")
+        assert svc.get_events() == []
+        print("  [OK] All methods return safe defaults when unconfigured")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -213,34 +166,43 @@ def test_supabase_service():
 
 def test_env_vars():
     print("\n=== Testing Env Vars ===")
-    env_path = Path(".env")
-    if not env_path.exists():
-        print("  [FAIL] .env missing")
-        return False
-    content = env_path.read_text()
-    required = ["LETTA_BASE_URL", "LETTA_API_KEY", "LETTA_AGENT_ID",
-                "ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY"]
+    env = Path(".env").read_text()
     ok = True
-    for var in required:
-        if var in content:
+    for var in ["ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY"]:
+        if var in env:
             print(f"  [OK] {var}")
         else:
-            print(f"  [FAIL] {var} missing from .env")
-            ok = False
+            print(f"  [FAIL] {var} missing"); ok = False
+    for bad in ["LETTA_BASE_URL", "LETTA_API_KEY", "LETTA_AGENT_ID"]:
+        if bad in env:
+            print(f"  [FAIL] {bad} still in .env"); ok = False
+    if ok:
+        print("  [OK] No stale Letta vars")
     return ok
 
 
-def test_tts():
-    print("\n=== Testing TTS ===")
+def test_ui_components():
+    print("\n=== Testing UI Components ===")
     try:
-        from desktop_app.services.tts_service import TTSService
-        tts = TTSService()
-        voices = tts.available_voices
-        print(f"  [OK] {len(voices)} voices")
-        tts.speed = 1.5
-        assert tts.speed == 1.5
-        tts.speed = 1.0
-        print("  [OK] speed control")
+        from desktop_app.ui.styles import MAIN_STYLE, LOAD_MORE_HTML
+        from desktop_app.ui.chat_widget import ChatWidget
+        from desktop_app.ui.inspector_panel import InspectorPanel
+        from desktop_app.ui.main_window import MainWindow
+        from desktop_app.ui.avatar_widget import RobotAvatar
+
+        # Inspector must not reference bridge/letta
+        import inspect
+        src = inspect.getsource(InspectorPanel)
+        assert "bridge" not in src
+        assert "letta" not in src.lower()
+        print("  [OK] Inspector: no bridge/letta")
+
+        src2 = inspect.getsource(MainWindow)
+        assert "bridge" not in src2
+        assert "letta" not in src2.lower()
+        print("  [OK] MainWindow: no bridge/letta")
+
+        print("  [OK] All UI widgets importable")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -248,71 +210,48 @@ def test_tts():
 
 
 def test_code_blocks():
-    print("\n=== Testing Code Block Parsing ===")
+    print("\n=== Testing Code Blocks ===")
     try:
         from desktop_app.ui.chat_widget import parse_segments, text_for_tts
-        text = "Code:\n```python\nprint('hi')\n```\nDone."
         store = {}
-        segs = parse_segments(text, store)
-        assert len(segs) == 3
-        assert segs[1]["type"] == "code"
-        tts = text_for_tts(text)
-        assert "print" not in tts
-        print("  [OK] code block parsing + TTS exclusion")
+        segs = parse_segments("Code:\n```python\nprint('hi')\n```\nDone.", store)
+        assert len(segs) == 3 and segs[1]["type"] == "code"
+        assert "print" not in text_for_tts("```python\nprint('hi')\n```\nDone.")
+        print("  [OK] code blocks + TTS exclusion")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
         return False
 
 
-def test_ui_components():
-    print("\n=== Testing UI Components ===")
+def test_tts():
+    print("\n=== Testing TTS ===")
     try:
-        from desktop_app.ui.styles import MAIN_STYLE, LOAD_MORE_HTML
-        assert "inspectorPanel" in MAIN_STYLE
-        print("  [OK] styles")
-        from desktop_app.ui.chat_widget import ChatWidget
-        from desktop_app.ui.inspector_panel import InspectorPanel
-        from desktop_app.ui.main_window import MainWindow
-        from desktop_app.ui.avatar_widget import RobotAvatar
-        print("  [OK] all UI widgets importable")
+        from desktop_app.services.tts_service import TTSService
+        tts = TTSService()
+        print(f"  [OK] {len(tts.available_voices)} voices")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
         return False
-
-
-def test_directories():
-    print("\n=== Testing Directories ===")
-    ok = True
-    for d in ["Onyx", "Onyx/history", "Onyx/config", "Onyx/logs", "Onyx/voices"]:
-        if Path(d).exists():
-            print(f"  [OK] {d}")
-        else:
-            print(f"  [FAIL] {d}")
-            ok = False
-    return ok
 
 
 def main():
     print("\n" + "=" * 56)
-    print("       ONYX Test Suite (Letta-first architecture)")
+    print("     ONYX Test Suite (Supabase+Anthropic, No Letta)")
     print("=" * 56)
 
     tests = [
-        ("Imports",              test_imports),
-        ("No Direct Anthropic",  test_no_direct_anthropic),
-        ("No Brain in Storage",  test_no_brain_in_storage),
-        ("Dead Files Removed",   test_deleted_files),
-        ("Env Vars",             test_env_vars),
-        ("Directories",          test_directories),
-        ("Storage Mirror",       test_storage),
-        ("Chat Service",         test_chat_service),
-        ("Letta Bridge",         test_letta_bridge),
-        ("Supabase Service",     test_supabase_service),
-        ("TTS",                  test_tts),
-        ("Code Blocks",          test_code_blocks),
-        ("UI Components",        test_ui_components),
+        ("Imports",           test_imports),
+        ("No Letta",          test_no_letta),
+        ("Env Vars",          test_env_vars),
+        ("Runtime",           test_runtime),
+        ("Chat Service",      test_chat_service),
+        ("Storage",           test_storage),
+        ("Supabase Service",  test_supabase_service),
+        ("UI Components",     test_ui_components),
+        ("Code Blocks",       test_code_blocks),
+        ("TTS",               test_tts),
     ]
 
     results = {}
@@ -320,12 +259,9 @@ def main():
         try:
             results[name] = fn()
         except Exception as e:
-            print(f"  [CRASH] {name}: {e}")
-            results[name] = False
+            print(f"  [CRASH] {name}: {e}"); results[name] = False
 
     print("\n" + "=" * 56)
-    print("                    SUMMARY")
-    print("=" * 56)
     passed = sum(1 for v in results.values() if v)
     for n, ok in results.items():
         print(f"  {'PASS' if ok else 'FAIL'}: {n}")

@@ -1,6 +1,5 @@
 """Storage service — local SQLite mirror for UI display + app settings.
 
-This is NOT the agent brain. Letta owns memory, identity, and context.
 SQLite stores:
   - Chat/message mirror (for visible transcript display)
   - App settings (TTS config, model selection, theme)
@@ -24,8 +23,8 @@ DEFAULT_SETTINGS = {
         "record_seconds": 5,
     },
     "model": {
-        "provider": "letta",
-        "name": "anthropic/claude-sonnet-4-6",
+        "provider": "anthropic",
+        "name": "claude-sonnet-4-6",
     },
     "theme": "dark",
 }

@@ -20,9 +20,10 @@ ICON_PATH = str(Path(__file__).parent.parent.parent / "install" / "onyx_icon.png
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, bridge=None, chat_service=None):
+    def __init__(self, runtime=None, chat_service=None, supabase=None):
         super().__init__()
-        self.bridge = bridge
+        self.runtime = runtime
+        self.supabase = supabase
         self._chat_service = chat_service
         self.storage = chat_service.storage if chat_service else StorageService()
         self.current_chat_id = None
@@ -31,8 +32,6 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.init_tray()
         self.load_chats()
-
-    # ── UI ───────────────────────────────────────────────────
 
     def init_ui(self):
         self.setWindowTitle("ONYX")
@@ -57,7 +56,6 @@ class MainWindow(QMainWindow):
         tl = QVBoxLayout(toggle_strip)
         tl.setContentsMargins(0, 8, 0, 8)
         tl.setSpacing(4)
-
         self.compact_btn = QPushButton("<")
         self.compact_btn.setObjectName("compactToggle")
         self.compact_btn.setToolTip("Toggle sidebar")
@@ -72,18 +70,20 @@ class MainWindow(QMainWindow):
         self.sidebar_widget = self._build_sidebar()
         self.splitter.addWidget(self.sidebar_widget)
 
-        self.chat_widget = ChatWidget(bridge=self.bridge, chat_service=self._chat_service)
+        self.chat_widget = ChatWidget(chat_service=self._chat_service)
         self.chat_widget.request_refresh_sidebar.connect(self.load_chats)
         self.splitter.addWidget(self.chat_widget)
 
-        self.inspector = InspectorPanel(bridge=self.bridge)
+        self.inspector = InspectorPanel(
+            runtime=self.runtime, supabase=self.supabase
+        )
         self.splitter.addWidget(self.inspector)
 
         self.splitter.setSizes([250, 850, 300])
         self.splitter.setStretchFactor(1, 1)
         main_lay.addWidget(self.splitter)
 
-        # Inspector toggle strip (right side)
+        # Inspector toggle
         rtoggle = QWidget()
         rtoggle.setFixedWidth(28)
         rtoggle.setStyleSheet(f"background:{BG_BASE}; border-left:1px solid {BORDER};")
@@ -103,39 +103,30 @@ class MainWindow(QMainWindow):
         sidebar.setObjectName("sidebar")
         sidebar.setMinimumWidth(220)
         sidebar.setMaximumWidth(380)
-
         lay = QVBoxLayout(sidebar)
         lay.setContentsMargins(12, 16, 12, 12)
         lay.setSpacing(8)
 
-        # Brand
         brand = QLabel("ONYX")
-        brand.setStyleSheet(f"""
-            font-size:24px; font-weight:800; color:{ACCENT};
-            padding:8px 4px; letter-spacing:4px;
-        """)
+        brand.setStyleSheet(f"font-size:24px; font-weight:800; color:{ACCENT}; padding:8px 4px; letter-spacing:4px;")
         lay.addWidget(brand)
 
-        # New chat
         new_btn = QPushButton("+ New Chat")
         new_btn.setObjectName("primaryButton")
         new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         new_btn.clicked.connect(self.new_chat)
         lay.addWidget(new_btn)
 
-        # Section label
         hist = QLabel("HISTORY")
         hist.setStyleSheet(f"font-size:10px; font-weight:700; color:{TEXT_MUTED}; padding:10px 4px 2px; letter-spacing:2px;")
         lay.addWidget(hist)
 
-        # Chat list
         self.chat_list = QListWidget()
         self.chat_list.itemClicked.connect(self.load_selected_chat)
         self.chat_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chat_list.customContextMenuRequested.connect(self._context_menu)
         lay.addWidget(self.chat_list)
 
-        # Bottom buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
         rename_btn = QPushButton("Rename")
@@ -145,7 +136,6 @@ class MainWindow(QMainWindow):
         del_btn.clicked.connect(self.delete_chat)
         btn_row.addWidget(del_btn)
         lay.addLayout(btn_row)
-
         return sidebar
 
     # ── System tray ──────────────────────────────────────────
@@ -153,9 +143,7 @@ class MainWindow(QMainWindow):
     def init_tray(self):
         icon_file = Path(ICON_PATH)
         icon = QIcon(str(icon_file)) if icon_file.exists() else QIcon()
-
         self.tray_icon = QSystemTrayIcon(icon, self)
-
         menu = QMenu()
         show_act = QAction("Show ONYX", self)
         show_act.triggered.connect(self._show_window)
@@ -164,7 +152,6 @@ class MainWindow(QMainWindow):
         quit_act = QAction("Quit", self)
         quit_act.triggered.connect(self._quit)
         menu.addAction(quit_act)
-
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self._tray_activated)
         self.tray_icon.setToolTip("ONYX AI Assistant")
@@ -172,51 +159,37 @@ class MainWindow(QMainWindow):
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if self.isVisible():
-                self.hide()
-            else:
-                self._show_window()
+            self.hide() if self.isVisible() else self._show_window()
 
     def _show_window(self):
-        self.show()
-        self.raise_()
-        self.activateWindow()
+        self.show(); self.raise_(); self.activateWindow()
 
     def _quit(self):
-        self.tray_icon.hide()
-        QApplication.quit()
+        self.tray_icon.hide(); QApplication.quit()
 
     def closeEvent(self, event):
         if self.tray_icon.isVisible():
-            self.hide()
-            event.ignore()
+            self.hide(); event.ignore()
         else:
             event.accept()
 
-    # ── Compact mode ─────────────────────────────────────────
+    # ── Compact / Inspector toggle ────────────────────────────
 
     def toggle_compact(self):
         if self.is_compact:
             self.sidebar_widget.show()
             self.compact_btn.setText("<")
-            self.compact_btn.setToolTip("Hide sidebar")
             self.resize(1400, 900)
         else:
             self.sidebar_widget.hide()
             self.compact_btn.setText(">")
-            self.compact_btn.setToolTip("Show sidebar")
             self.resize(700, 500)
         self.is_compact = not self.is_compact
 
     def toggle_inspector(self):
-        if self.inspector.isVisible():
-            self.inspector.hide()
-            self.inspector_btn.setText("<")
-            self.inspector_btn.setToolTip("Show inspector")
-        else:
-            self.inspector.show()
-            self.inspector_btn.setText(">")
-            self.inspector_btn.setToolTip("Hide inspector")
+        vis = self.inspector.isVisible()
+        self.inspector.setVisible(not vis)
+        self.inspector_btn.setText("<" if vis else ">")
 
     # ── Chat management ──────────────────────────────────────
 
@@ -245,7 +218,6 @@ class MainWindow(QMainWindow):
     def rename_chat(self):
         cur = self.chat_list.currentItem()
         if not cur:
-            QMessageBox.warning(self, "No Selection", "Select a chat first.")
             return
         cid = cur.data(Qt.ItemDataRole.UserRole)
         new_title, ok = QInputDialog.getText(self, "Rename", "New name:", text=cur.text())
@@ -256,7 +228,6 @@ class MainWindow(QMainWindow):
     def delete_chat(self):
         cur = self.chat_list.currentItem()
         if not cur:
-            QMessageBox.warning(self, "No Selection", "Select a chat first.")
             return
         cid = cur.data(Qt.ItemDataRole.UserRole)
         reply = QMessageBox.question(self, "Delete", "Delete this chat?",
@@ -270,8 +241,6 @@ class MainWindow(QMainWindow):
 
     def _context_menu(self, pos):
         menu = QMenu(self)
-        rename_act = menu.addAction("Rename")
-        rename_act.triggered.connect(self.rename_chat)
-        del_act = menu.addAction("Delete")
-        del_act.triggered.connect(self.delete_chat)
+        menu.addAction("Rename").triggered.connect(self.rename_chat)
+        menu.addAction("Delete").triggered.connect(self.delete_chat)
         menu.exec(self.chat_list.mapToGlobal(pos))

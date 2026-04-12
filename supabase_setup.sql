@@ -1,5 +1,5 @@
--- ONYX Supabase Schema Setup
--- Run this in your Supabase SQL Editor to create the required tables.
+-- ONYX Supabase Schema (no Letta)
+-- Run in Supabase SQL Editor
 
 create table if not exists conversations (
   id uuid primary key default gen_random_uuid(),
@@ -18,6 +18,33 @@ create table if not exists messages (
   role text not null,
   content text not null,
   created_at timestamptz default now()
+);
+
+create table if not exists memories (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null default 'local',
+  conversation_id uuid references conversations(id) on delete set null,
+  content text not null,
+  memory_type text not null default 'fact',
+  created_at timestamptz default now()
+);
+
+create table if not exists beliefs (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null default 'local',
+  content text not null,
+  confidence float default 0.8,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists goals (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null default 'local',
+  title text not null,
+  status text not null default 'active',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 
 create table if not exists tasks (
@@ -55,7 +82,6 @@ create table if not exists agent_state (
   agent_id text unique not null default 'onyx',
   user_id text not null default 'local',
   heartbeat timestamptz default now(),
-  active_conversation_id uuid references conversations(id) on delete set null,
   working_summary text default '',
   goals jsonb default '[]',
   preferences jsonb default '{}',
@@ -67,21 +93,30 @@ create table if not exists agent_state (
 create index if not exists idx_messages_conversation on messages(conversation_id);
 create index if not exists idx_messages_created on messages(created_at);
 create index if not exists idx_conversations_user on conversations(user_id);
+create index if not exists idx_memories_user on memories(user_id);
+create index if not exists idx_beliefs_user on beliefs(user_id);
+create index if not exists idx_goals_user on goals(user_id);
 create index if not exists idx_tasks_user on tasks(user_id);
 create index if not exists idx_events_user on events(user_id);
 create index if not exists idx_files_user on files(user_id);
 
--- Enable Row Level Security
+-- RLS
 alter table conversations enable row level security;
 alter table messages enable row level security;
+alter table memories enable row level security;
+alter table beliefs enable row level security;
+alter table goals enable row level security;
 alter table tasks enable row level security;
 alter table events enable row level security;
 alter table files enable row level security;
 alter table agent_state enable row level security;
 
--- Permissive policies (tighten based on your auth setup)
+-- Permissive policies (tighten with real auth)
 create policy "Allow all" on conversations for all using (true);
 create policy "Allow all" on messages for all using (true);
+create policy "Allow all" on memories for all using (true);
+create policy "Allow all" on beliefs for all using (true);
+create policy "Allow all" on goals for all using (true);
 create policy "Allow all" on tasks for all using (true);
 create policy "Allow all" on events for all using (true);
 create policy "Allow all" on files for all using (true);
