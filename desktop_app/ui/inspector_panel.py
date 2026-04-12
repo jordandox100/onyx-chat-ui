@@ -212,12 +212,20 @@ class InspectorPanel(QWidget):
     # ── Refresh methods ───────────────────────────────────────
 
     def _refresh_status(self):
-        if self.bridge and self.bridge.supabase:
-            txt = self.bridge.supabase.status_text
-            color = SUCCESS if txt == "CONNECTED" else TEXT_MUTED
+        if self.bridge:
+            status = self.bridge.status
+            if status == "AGENT_READY":
+                txt, color = "LETTA READY", SUCCESS
+            elif status == "CONNECTED":
+                txt, color = "LETTA CONNECTED", ACCENT
+            elif status == "NOT_CONFIGURED":
+                txt, color = "LETTA NOT SET", TEXT_MUTED
+            elif status == "ERROR":
+                txt, color = "LETTA ERROR", DANGER
+            else:
+                txt, color = status, TEXT_MUTED
         else:
-            txt = "LOCAL"
-            color = TEXT_MUTED
+            txt, color = "NO BRIDGE", TEXT_MUTED
         self.status_label.setText(txt)
         self.status_label.setStyleSheet(
             f"font-size:10px; color:{color}; letter-spacing:1px;"
@@ -226,19 +234,18 @@ class InspectorPanel(QWidget):
     def _refresh_agent(self):
         self.sec_agent.clear_content()
         if not self.bridge:
-            self.sec_agent.add_row("Status", "active", SUCCESS)
-            self.sec_agent.add_row("Model", "unknown")
+            self.sec_agent.add_empty("No bridge configured")
             return
         state = self.bridge.get_agent_state()
-        self.sec_agent.add_row("Status", state.get("status", "active"), SUCCESS)
+        status = state.get("status", "unknown")
+        color = SUCCESS if status == "AGENT_READY" else TEXT_SEC
+        self.sec_agent.add_row("Status", status, color)
+        self.sec_agent.add_row("Runtime", "Letta" if self.bridge.agent_ready else "none")
+        self.sec_agent.add_row("Agent", state.get("agent_id", "none")[:20])
         self.sec_agent.add_row("Model", state.get("model", "?"))
-        hb = state.get("heartbeat")
-        self.sec_agent.add_row("Heartbeat", str(hb) if hb else "local")
-        ac = state.get("active_conversation")
-        self.sec_agent.add_row("Conv", str(ac) if ac else "none")
-        ws = state.get("working_summary", "")
-        if ws:
-            self.sec_agent.add_text(ws[:200])
+        detail = state.get("status_detail", "")
+        if detail:
+            self.sec_agent.add_text(detail[:200], color=TEXT_MUTED)
 
     def _refresh_summary(self):
         self.sec_summary.clear_content()
@@ -246,17 +253,15 @@ class InspectorPanel(QWidget):
             self.sec_summary.add_empty("No conversation selected")
             return
         self.sec_summary.add_row("Title", self._chat_title or "Untitled")
+        self.sec_summary.add_row("Local ID", str(self._chat_id))
 
-        if self.bridge:
-            count = self.bridge.get_message_count(self._chat_id)
-            self.sec_summary.add_row("Messages", str(count))
-            summary = self.bridge.get_conversation_summary(self._chat_id)
-            if summary:
-                self.sec_summary.add_text(summary[:500])
-            else:
-                self.sec_summary.add_empty("No summary yet (auto-generated after ~10 messages)")
+        if self.bridge and self.bridge.agent_ready:
+            self.sec_summary.add_row("Runtime", "Letta", SUCCESS)
+            self.sec_summary.add_row("Agent", (self.bridge.agent_id or "")[:16])
+        elif self.bridge:
+            self.sec_summary.add_row("Runtime", self.bridge.status, TEXT_MUTED)
         else:
-            self.sec_summary.add_empty("Bridge not available")
+            self.sec_summary.add_empty("No bridge")
 
     def _refresh_tasks(self):
         self.sec_tasks.clear_content()
@@ -329,20 +334,26 @@ class InspectorPanel(QWidget):
         if not self.bridge:
             self.sec_memory.add_empty("No bridge")
             return
-        mem = self.bridge.get_memory_summary(self._chat_id)
-        ws = mem.get("working_memory", "")
-        if ws:
-            self.sec_memory.add_row("Working", ws[:200])
-        goals = mem.get("goals", [])
-        if goals:
-            self.sec_memory.add_row("Goals", ", ".join(str(g) for g in goals[:5]))
-        prefs = mem.get("preferences", {})
-        if prefs:
-            self.sec_memory.add_row("Prefs", str(prefs)[:200])
-        cs = mem.get("conversation_summary", "")
-        if cs:
-            self.sec_memory.add_text(cs[:300])
-        if not ws and not goals and not prefs and not cs:
+        if not self.bridge.agent_ready:
             self.sec_memory.add_empty(
-                "Memory auto-populates from conversation context"
+                "Letta not configured. Memory blocks appear here when connected."
             )
+            return
+
+        blocks = self.bridge.get_memory_blocks()
+        if not blocks:
+            self.sec_memory.add_empty("No memory blocks")
+            return
+        for b in blocks:
+            label = b.get("label", "?")
+            value = b.get("value", "")
+            limit = b.get("limit", 0)
+            # Show label as header, value as content
+            header_color = ACCENT if label == "persona" else TEXT_SEC
+            self.sec_memory.add_row(
+                label.upper(),
+                f"({len(value)}/{limit} chars)" if limit else f"({len(value)} chars)",
+                header_color,
+            )
+            if value:
+                self.sec_memory.add_text(value[:300], color=TEXT_PRI)

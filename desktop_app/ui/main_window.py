@@ -20,10 +20,11 @@ ICON_PATH = str(Path(__file__).parent.parent.parent / "install" / "onyx_icon.png
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, bridge=None):
+    def __init__(self, bridge=None, chat_service=None):
         super().__init__()
         self.bridge = bridge
-        self.storage = bridge.chat.storage if (bridge and bridge.chat) else StorageService()
+        self._chat_service = chat_service
+        self.storage = chat_service.storage if chat_service else StorageService()
         self.current_chat_id = None
         self.is_compact = False
         self.inspector_visible = True
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
         self.sidebar_widget = self._build_sidebar()
         self.splitter.addWidget(self.sidebar_widget)
 
-        self.chat_widget = ChatWidget(bridge=self.bridge)
+        self.chat_widget = ChatWidget(bridge=self.bridge, chat_service=self._chat_service)
         self.chat_widget.request_refresh_sidebar.connect(self.load_chats)
         self.splitter.addWidget(self.chat_widget)
 

@@ -162,13 +162,13 @@ def _esc(text: str) -> str:
 class ChatWidget(QWidget):
     request_refresh_sidebar = Signal()
 
-    def __init__(self, bridge=None):
+    def __init__(self, bridge=None, chat_service=None):
         super().__init__()
         self.bridge = bridge
 
-        if bridge and bridge.chat:
-            self.chat_service = bridge.chat
-            self.storage = bridge.chat.storage
+        if chat_service:
+            self.chat_service = chat_service
+            self.storage = chat_service.storage
         else:
             self.chat_service = ChatService()
             self.storage = StorageService()
