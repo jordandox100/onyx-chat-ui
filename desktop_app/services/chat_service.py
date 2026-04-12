@@ -86,8 +86,21 @@ class ChatService:
         if cancel_flag and cancel_flag.is_set():
             return ""
 
+        route = result.get("route", "?")
+        tools_used = result.get("tools_used", [])
+        logger.info(f"[chat] route={route}, tools={tools_used or 'none'}")
+
         response = result.get("response", "")
         if response:
             self.storage.add_message(chat_id, "assistant", response)
+
+        # Emit tool call info to UI if present
+        for tc in result.get("tool_calls", []):
+            if on_tool_output:
+                on_tool_output(
+                    tc.get("name", "tool"),
+                    tc.get("arguments", "")[:200],
+                    tc.get("result", "")[:2000],
+                )
 
         return response

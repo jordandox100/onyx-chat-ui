@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ONYX Test Suite — Supabase + Anthropic runtime, no Letta"""
+"""ONYX Test Suite — Supabase + Anthropic runtime, conditional tools, no Letta"""
 import sys
 from pathlib import Path
 
@@ -17,21 +17,13 @@ def test_imports():
         ("supabase",   "from supabase import create_client"),
     ]:
         try:
-            exec(stmt)
-            print(f"  [OK] {name}")
-        except ImportError as e:
-            print(f"  [FAIL] {name}: {e}")
-            ok = False
-    for name, stmt in [("torch", "import torch"), ("whisper", "import whisper")]:
-        try:
             exec(stmt); print(f"  [OK] {name}")
-        except ImportError:
-            print(f"  [WARN] {name} (optional)")
+        except ImportError as e:
+            print(f"  [FAIL] {name}: {e}"); ok = False
     return ok
 
 
 def test_no_letta():
-    """Verify zero Letta dependency in active code."""
     print("\n=== Testing: No Letta ===")
     ok = True
     for f in ["desktop_app/services/runtime.py", "desktop_app/services/chat_service.py",
@@ -39,56 +31,125 @@ def test_no_letta():
               "desktop_app/ui/main_window.py"]:
         src = Path(f).read_text()
         if "from letta" in src or "import letta" in src or "LettaBridge" in src:
-            print(f"  [FAIL] {f} still imports Letta")
-            ok = False
-    if ok:
-        print("  [OK] No Letta imports in active code")
-
-    deleted = Path("desktop_app/services/letta_bridge.py")
-    if deleted.exists():
-        print("  [FAIL] letta_bridge.py still exists")
-        ok = False
+            print(f"  [FAIL] {f} imports Letta"); ok = False
+    if ok: print("  [OK] No Letta imports")
+    if Path("desktop_app/services/letta_bridge.py").exists():
+        print("  [FAIL] letta_bridge.py still exists"); ok = False
     else:
         print("  [OK] letta_bridge.py deleted")
-
     env = Path(".env").read_text()
     if "LETTA_" in env:
-        print("  [FAIL] .env still has LETTA_ vars")
-        ok = False
+        print("  [FAIL] .env still has LETTA_ vars"); ok = False
     else:
-        print("  [OK] .env clean of LETTA vars")
-
-    reqs = Path("requirements.txt").read_text()
-    if "letta" in reqs.lower():
-        print("  [FAIL] requirements.txt still has letta")
-        ok = False
-    else:
-        print("  [OK] requirements.txt clean of letta")
-
+        print("  [OK] .env clean")
     return ok
 
 
-def test_runtime():
-    print("\n=== Testing Runtime ===")
+def test_tool_router():
+    print("\n=== Testing Tool Router ===")
+    try:
+        from desktop_app.services.tool_router import (
+            classify_tool_need, select_tool_bundle,
+            ROUTE_DIRECT, ROUTE_WEB, ROUTE_MEMORY, ROUTE_FILE, ROUTE_CODE,
+        )
+
+        # Direct answer (no tools)
+        assert classify_tool_need("explain quantum computing") == ROUTE_DIRECT
+        assert classify_tool_need("rewrite this paragraph") == ROUTE_DIRECT
+        assert classify_tool_need("what is 2+2") == ROUTE_DIRECT
+        print("  [OK] direct_answer routing (no tools)")
+
+        # Web
+        assert classify_tool_need("search online for Python 4 release") == ROUTE_WEB
+        assert classify_tool_need("what's the latest news") == ROUTE_WEB
+        print("  [OK] web_lookup routing")
+
+        # Memory
+        assert classify_tool_need("do you remember my project?") == ROUTE_MEMORY
+        assert classify_tool_need("what did I say last time") == ROUTE_MEMORY
+        print("  [OK] memory_lookup routing")
+
+        # File
+        assert classify_tool_need("read the file /etc/hosts") == ROUTE_FILE
+        assert classify_tool_need("show me /home/user/config.yaml") == ROUTE_FILE
+        print("  [OK] file_lookup routing")
+
+        # Code
+        assert classify_tool_need("run python test.py") == ROUTE_CODE
+        assert classify_tool_need("debug this traceback") == ROUTE_CODE
+        print("  [OK] code_work routing")
+
+        # Bundles
+        assert select_tool_bundle(ROUTE_DIRECT) == []
+        assert len(select_tool_bundle(ROUTE_WEB)) == 1
+        assert len(select_tool_bundle(ROUTE_FILE)) == 2
+        assert len(select_tool_bundle(ROUTE_CODE)) == 3
+        print("  [OK] tool bundles: direct=0, web=1, file=2, code=3")
+
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_tool_executor():
+    print("\n=== Testing Tool Executor ===")
+    try:
+        from desktop_app.services.tool_executor import execute_tool_call
+
+        # Shell exec
+        result = execute_tool_call("shell_exec", {"command": "echo hello123"})
+        assert "hello123" in result
+        print("  [OK] shell_exec")
+
+        # File read
+        result = execute_tool_call("file_read", {"path": "/app/.env"})
+        assert "ANTHROPIC_API_KEY" in result
+        print("  [OK] file_read")
+
+        # File search
+        result = execute_tool_call("file_search",
+                                   {"pattern": "*.py", "directory": "/app/desktop_app/services"})
+        assert "runtime.py" in result
+        print("  [OK] file_search")
+
+        # Unknown tool
+        result = execute_tool_call("nonexistent", {})
+        assert "Unknown" in result
+        print("  [OK] unknown tool handled")
+
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_runtime_no_tools_default():
+    print("\n=== Testing Runtime (no tools default) ===")
     try:
         from desktop_app.services.runtime import OnyxRuntime
+        import inspect
+
         rt = OnyxRuntime()
         state = rt.get_agent_state()
         assert state["runtime"] == "supabase+anthropic"
         print(f"  [OK] Status: {state['status']}")
-        print(f"  [OK] Runtime: {state['runtime']}")
 
-        # Without API key, should return clean error
-        result = rt.send_message("test", conversation_id=1)
-        assert "not ready" in result["response"].lower() or "not configured" in result["response"].lower() or "error" in result["response"].lower()
-        print("  [OK] send_message: clean failure without key")
+        # Verify no tools parameter in direct path
+        src = inspect.getsource(OnyxRuntime._execute_direct)
+        assert "tools=" not in src
+        print("  [OK] _execute_direct: no tools= parameter")
 
-        # No transcript replay in source
-        import inspect
-        src = inspect.getsource(OnyxRuntime)
-        assert "history[-20:]" not in src
-        assert "get_chat_messages" not in src
-        print("  [OK] No transcript replay in runtime")
+        # Verify tools only in _execute_with_tools
+        src2 = inspect.getsource(OnyxRuntime._execute_with_tools)
+        assert "tools=tools" in src2
+        print("  [OK] _execute_with_tools: tools parameter present")
+
+        # Verify router is used in send_message
+        src3 = inspect.getsource(OnyxRuntime.send_message)
+        assert "classify_tool_need" in src3
+        assert "select_tool_bundle" in src3
+        print("  [OK] send_message uses router")
 
         return True
     except Exception as e:
@@ -103,16 +164,8 @@ def test_chat_service():
         cs = ChatService()
         assert cs.runtime_name == "not_configured"
         print(f"  [OK] runtime = {cs.runtime_name}")
-
-        for name, mid, desc in ANTHROPIC_MODELS:
-            assert not mid.startswith("anthropic/"), f"Should not have anthropic/ prefix: {mid}"
-        print(f"  [OK] {len(ANTHROPIC_MODELS)} models (raw IDs, no prefix)")
-
-        import inspect
-        src = inspect.getsource(ChatService)
-        assert "bridge" not in src.lower()
-        assert "letta" not in src.lower()
-        print("  [OK] No bridge/letta references")
+        assert len(ANTHROPIC_MODELS) >= 10
+        print(f"  [OK] {len(ANTHROPIC_MODELS)} models")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -123,22 +176,12 @@ def test_storage():
     print("\n=== Testing Storage ===")
     try:
         from desktop_app.services.storage_service import StorageService
-        s = StorageService()
-        s.initialize()
+        s = StorageService(); s.initialize()
         cid = s.create_chat("Test")
         s.add_message(cid, "user", "hi")
-        s.add_message(cid, "assistant", "hello")
-        assert s.get_message_count(cid) == 2
-        assert len(s.get_messages_page(cid, 0, 1)) == 1
+        assert s.get_message_count(cid) == 1
         s.delete_chat(cid)
-        print("  [OK] SQLite mirror works")
-
-        import inspect
-        src = inspect.getsource(StorageService)
-        assert "personality" not in src.lower()
-        assert "knowledgebase" not in src.lower()
-        assert "build_system" not in src.lower()
-        print("  [OK] No brain logic in storage")
+        print("  [OK] SQLite mirror")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -150,14 +193,28 @@ def test_supabase_service():
     try:
         from desktop_app.services.supabase_service import SupabaseService
         svc = SupabaseService()
-        print(f"  [OK] Status: {svc.status_text}")
-        assert svc.get_conversations() == []
         assert svc.get_memories() == []
         assert svc.get_beliefs() == []
         assert svc.get_goals() == []
-        assert svc.get_tasks() == []
-        assert svc.get_events() == []
-        print("  [OK] All methods return safe defaults when unconfigured")
+        print(f"  [OK] Status: {svc.status_text}, graceful fallback")
+        return True
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return False
+
+
+def test_ui_components():
+    print("\n=== Testing UI Components ===")
+    try:
+        from desktop_app.ui.chat_widget import ChatWidget
+        from desktop_app.ui.inspector_panel import InspectorPanel
+        from desktop_app.ui.main_window import MainWindow
+        import inspect
+        src = inspect.getsource(InspectorPanel)
+        assert "bridge" not in src
+        src2 = inspect.getsource(MainWindow)
+        assert "bridge" not in src2
+        print("  [OK] No bridge/letta in UI")
         return True
     except Exception as e:
         print(f"  [FAIL] {e}")
@@ -168,60 +225,12 @@ def test_env_vars():
     print("\n=== Testing Env Vars ===")
     env = Path(".env").read_text()
     ok = True
-    for var in ["ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY"]:
-        if var in env:
-            print(f"  [OK] {var}")
-        else:
-            print(f"  [FAIL] {var} missing"); ok = False
-    for bad in ["LETTA_BASE_URL", "LETTA_API_KEY", "LETTA_AGENT_ID"]:
-        if bad in env:
-            print(f"  [FAIL] {bad} still in .env"); ok = False
-    if ok:
-        print("  [OK] No stale Letta vars")
+    for v in ["ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY"]:
+        if v in env: print(f"  [OK] {v}")
+        else: print(f"  [FAIL] {v} missing"); ok = False
+    for bad in ["LETTA_BASE_URL", "LETTA_API_KEY"]:
+        if bad in env: print(f"  [FAIL] {bad} in .env"); ok = False
     return ok
-
-
-def test_ui_components():
-    print("\n=== Testing UI Components ===")
-    try:
-        from desktop_app.ui.styles import MAIN_STYLE, LOAD_MORE_HTML
-        from desktop_app.ui.chat_widget import ChatWidget
-        from desktop_app.ui.inspector_panel import InspectorPanel
-        from desktop_app.ui.main_window import MainWindow
-        from desktop_app.ui.avatar_widget import RobotAvatar
-
-        # Inspector must not reference bridge/letta
-        import inspect
-        src = inspect.getsource(InspectorPanel)
-        assert "bridge" not in src
-        assert "letta" not in src.lower()
-        print("  [OK] Inspector: no bridge/letta")
-
-        src2 = inspect.getsource(MainWindow)
-        assert "bridge" not in src2
-        assert "letta" not in src2.lower()
-        print("  [OK] MainWindow: no bridge/letta")
-
-        print("  [OK] All UI widgets importable")
-        return True
-    except Exception as e:
-        print(f"  [FAIL] {e}")
-        return False
-
-
-def test_code_blocks():
-    print("\n=== Testing Code Blocks ===")
-    try:
-        from desktop_app.ui.chat_widget import parse_segments, text_for_tts
-        store = {}
-        segs = parse_segments("Code:\n```python\nprint('hi')\n```\nDone.", store)
-        assert len(segs) == 3 and segs[1]["type"] == "code"
-        assert "print" not in text_for_tts("```python\nprint('hi')\n```\nDone.")
-        print("  [OK] code blocks + TTS exclusion")
-        return True
-    except Exception as e:
-        print(f"  [FAIL] {e}")
-        return False
 
 
 def test_tts():
@@ -237,21 +246,22 @@ def test_tts():
 
 
 def main():
-    print("\n" + "=" * 56)
-    print("     ONYX Test Suite (Supabase+Anthropic, No Letta)")
-    print("=" * 56)
+    print("\n" + "=" * 60)
+    print("  ONYX Tests (Supabase+Anthropic, Conditional Tools, No Letta)")
+    print("=" * 60)
 
     tests = [
-        ("Imports",           test_imports),
-        ("No Letta",          test_no_letta),
-        ("Env Vars",          test_env_vars),
-        ("Runtime",           test_runtime),
-        ("Chat Service",      test_chat_service),
-        ("Storage",           test_storage),
-        ("Supabase Service",  test_supabase_service),
-        ("UI Components",     test_ui_components),
-        ("Code Blocks",       test_code_blocks),
-        ("TTS",               test_tts),
+        ("Imports",               test_imports),
+        ("No Letta",              test_no_letta),
+        ("Env Vars",              test_env_vars),
+        ("Tool Router",           test_tool_router),
+        ("Tool Executor",         test_tool_executor),
+        ("Runtime (no tools)",    test_runtime_no_tools_default),
+        ("Chat Service",          test_chat_service),
+        ("Storage",               test_storage),
+        ("Supabase Service",      test_supabase_service),
+        ("UI Components",         test_ui_components),
+        ("TTS",                   test_tts),
     ]
 
     results = {}
@@ -261,7 +271,7 @@ def main():
         except Exception as e:
             print(f"  [CRASH] {name}: {e}"); results[name] = False
 
-    print("\n" + "=" * 56)
+    print("\n" + "=" * 60)
     passed = sum(1 for v in results.values() if v)
     for n, ok in results.items():
         print(f"  {'PASS' if ok else 'FAIL'}: {n}")

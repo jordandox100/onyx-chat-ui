@@ -1,22 +1,25 @@
 """ONYX Runtime — Supabase-backed agent with direct Anthropic calls.
 
-No Letta. No transcript replay. No hidden overhead.
+No tools by default. Tool bundles attached conditionally per request.
+Routing is heuristic-first (zero-cost), cheap model fallback if uncertain.
 
-Per-turn cost:
-  System prompt (~800 tokens): persona + state summary + goals + beliefs + memories
-  Recent messages (last 6, ~3000 tokens)
-  User message (~200 tokens)
-  Total: ~4000 tokens input per turn
+Normal turn (no tools):
+  System (~800 tok): persona + summary + goals + beliefs + memories
+  Messages (~3000 tok): last 6 only
+  Total: ~4000 tokens
 
-After each turn:
-  - Store message pair in Supabase
-  - Periodically update conversation summary
-  - Extract and store new memories
+Tool turn (when needed):
+  Same context + minimal tool definitions for the selected bundle
 """
 import os
+import json
 from typing import Optional, List, Dict
-from datetime import datetime, timezone
 
+from desktop_app.services.tool_router import (
+    classify_tool_need, select_tool_bundle,
+    ROUTE_DIRECT, ROUTE_MULTI,
+)
+from desktop_app.services.tool_executor import execute_tool_call
 from desktop_app.utils.logger import get_logger
 
 logger = get_logger()
@@ -31,20 +34,18 @@ except ImportError:
 PERSONA = (
     "You are ONYX, a persistent AI assistant on the user's Linux desktop. "
     "You are sharp, direct, technically savvy, and genuinely helpful. "
-    "You have persistent memory across sessions — you remember past conversations. "
-    "Be concise. Solve the real problem. Adapt tone to the user."
+    "You have persistent memory across sessions. "
+    "Be concise. Solve the real problem."
 )
 
-RECENT_WINDOW = 6        # Messages sent as raw context
-SUMMARY_INTERVAL = 8     # Update summary every N messages
+RECENT_WINDOW = 6
+SUMMARY_INTERVAL = 8
 DEFAULT_MODEL = "claude-sonnet-4-6"
+MAX_TOOL_ROUNDS = 3
 
 
 class OnyxRuntime:
-    """Custom agent runtime: Supabase state + direct Anthropic calls.
-
-    No Letta dependency. Compact prompt. Persistent memory.
-    """
+    """Supabase state + direct Anthropic calls + conditional tool attachment."""
 
     def __init__(self, supabase=None):
         self.supabase = supabase
@@ -92,32 +93,50 @@ class OnyxRuntime:
     def set_model(self, model: str):
         self._model = model
 
-    # ── Chat ──────────────────────────────────────────────────
+    # ── Main Entry ────────────────────────────────────────────
 
     def send_message(self, text: str, conversation_id: int,
                      user_id: str = "local",
                      local_messages: list = None) -> dict:
-        """Send message with compact context. Returns response dict.
-
-        Prompt structure (cheap):
-          system = persona + conversation_summary + goals + beliefs + memories
-          messages = last 6 messages + new user message
-        """
+        """Route, optionally attach tools, call model, return response."""
         if not self.available:
             return {"response": f"[Runtime not ready: {self.status_detail}]",
-                    "usage": {}}
+                    "route": "error", "tools_used": [], "usage": {}}
 
-        # Build compact system prompt from Supabase state
+        # Step 1: Route the request
+        route = classify_tool_need(text)
+        tools = select_tool_bundle(route)
+
+        # Step 2: Build compact context
         system = self._build_system_prompt(conversation_id, user_id)
-
-        # Build message list: recent window + new message
         messages = self._build_messages(conversation_id, text, local_messages)
 
         logger.info(
-            f"[runtime] model={self._model}, system={len(system)} chars, "
-            f"msgs={len(messages)}"
+            f"[runtime] route={route}, tools={len(tools)}, "
+            f"model={self._model}, system={len(system)}c, msgs={len(messages)}"
         )
 
+        # Step 3: Execute
+        if not tools:
+            result = self._execute_direct(system, messages)
+        else:
+            result = self._execute_with_tools(system, messages, tools)
+
+        result["route"] = route
+        result["tools_used"] = [t["name"] for t in tools]
+
+        # Step 4: Persist
+        reply = result.get("response", "")
+        if reply:
+            self._persist_turn(conversation_id, user_id, text, reply)
+            self._maybe_update_summary(conversation_id, user_id)
+
+        return result
+
+    # ── Execution Paths ───────────────────────────────────────
+
+    def _execute_direct(self, system: str, messages: list) -> dict:
+        """No-tools path — cheapest possible."""
         try:
             response = self._client.messages.create(
                 model=self._model,
@@ -126,171 +145,222 @@ class OnyxRuntime:
                 messages=messages,
             )
             reply = response.content[0].text if response.content else ""
-            usage = {
-                "prompt_tokens": response.usage.input_tokens,
-                "completion_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
-            }
-            logger.info(
-                f"[runtime] response={len(reply)} chars, tokens={usage}"
-            )
-
-            # Store in Supabase
-            self._persist_turn(conversation_id, user_id, text, reply)
-
-            # Periodic summary update
-            self._maybe_update_summary(conversation_id, user_id)
-
+            usage = self._extract_usage(response)
+            logger.info(f"[runtime:direct] {len(reply)}c, {usage}")
             return {"response": reply, "usage": usage}
-
         except Exception as e:
-            logger.error(f"[runtime] Anthropic error: {e}")
+            logger.error(f"[runtime:direct] {e}")
             return {"response": f"[Error: {e}]", "usage": {}}
 
-    # ── Prompt Building (compact) ─────────────────────────────
+    def _execute_with_tools(self, system: str, messages: list,
+                            tools: list) -> dict:
+        """Tool path — minimal bundle, up to MAX_TOOL_ROUNDS iterations."""
+        tool_results = []
+
+        for round_num in range(MAX_TOOL_ROUNDS):
+            try:
+                response = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=4096,
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                )
+            except Exception as e:
+                logger.error(f"[runtime:tools] round {round_num}: {e}")
+                return {"response": f"[Error: {e}]", "usage": {}}
+
+            # Check stop reason
+            if response.stop_reason == "end_turn":
+                # Model is done — extract final text
+                reply = self._extract_text(response)
+                usage = self._extract_usage(response)
+                logger.info(
+                    f"[runtime:tools] done after {round_num + 1} round(s), "
+                    f"{len(tool_results)} tool calls, {usage}"
+                )
+                return {"response": reply, "usage": usage,
+                        "tool_calls": tool_results}
+
+            if response.stop_reason == "tool_use":
+                # Process tool calls
+                tool_use_blocks = [
+                    b for b in response.content
+                    if b.type == "tool_use"
+                ]
+                # Append assistant response (with tool_use blocks) to messages
+                messages.append({
+                    "role": "assistant",
+                    "content": response.content,
+                })
+
+                # Execute each tool and build tool_result blocks
+                tool_result_content = []
+                for block in tool_use_blocks:
+                    tool_name = block.name
+                    tool_input = block.input
+                    tool_id = block.id
+
+                    logger.info(f"[runtime:tools] calling {tool_name}")
+                    output = execute_tool_call(
+                        tool_name, tool_input, supabase=self.supabase
+                    )
+                    tool_results.append({
+                        "name": tool_name,
+                        "arguments": json.dumps(tool_input)[:200],
+                        "result": output[:500],
+                    })
+                    tool_result_content.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": output,
+                    })
+
+                messages.append({
+                    "role": "user",
+                    "content": tool_result_content,
+                })
+            else:
+                # Unexpected stop reason — return what we have
+                reply = self._extract_text(response)
+                return {"response": reply or "[Unexpected stop]",
+                        "usage": self._extract_usage(response),
+                        "tool_calls": tool_results}
+
+        # Exhausted rounds
+        return {"response": "[Tool execution limit reached]",
+                "usage": {}, "tool_calls": tool_results}
+
+    # ── Helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_text(response) -> str:
+        for block in response.content:
+            if hasattr(block, "text"):
+                return block.text
+        return ""
+
+    @staticmethod
+    def _extract_usage(response) -> dict:
+        return {
+            "prompt_tokens": response.usage.input_tokens,
+            "completion_tokens": response.usage.output_tokens,
+            "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+        }
+
+    # ── Prompt Building ───────────────────────────────────────
 
     def _build_system_prompt(self, conversation_id: int,
                              user_id: str) -> str:
-        """Build small system prompt from Supabase state."""
         parts = [PERSONA]
-
         if not self.supabase or not self.supabase.available:
             return parts[0]
 
-        # Conversation summary
         summary = self._get_summary(conversation_id)
         if summary:
             parts.append(f"\n=== Conversation So Far ===\n{summary}")
 
-        # Active goals
         goals = self._get_goals(user_id)
         if goals:
-            goal_text = "\n".join(
+            parts.append("\n=== Active Goals ===\n" + "\n".join(
                 f"- [{g.get('status','?')}] {g.get('title','')}"
                 for g in goals[:5]
-            )
-            parts.append(f"\n=== Active Goals ===\n{goal_text}")
+            ))
 
-        # Key beliefs
         beliefs = self._get_beliefs(user_id)
         if beliefs:
-            belief_text = "\n".join(
-                f"- {b.get('content','')}"
-                for b in beliefs[:8]
-            )
-            parts.append(f"\n=== What I Know About You ===\n{belief_text}")
+            parts.append("\n=== What I Know About You ===\n" + "\n".join(
+                f"- {b.get('content','')}" for b in beliefs[:8]
+            ))
 
-        # Relevant memories
         memories = self._get_memories(user_id, conversation_id)
         if memories:
-            mem_text = "\n".join(
-                f"- {m.get('content','')}"
-                for m in memories[:6]
-            )
-            parts.append(f"\n=== Relevant Memories ===\n{mem_text}")
+            parts.append("\n=== Relevant Memories ===\n" + "\n".join(
+                f"- {m.get('content','')}" for m in memories[:6]
+            ))
 
         return "\n".join(parts)
 
     def _build_messages(self, conversation_id: int, new_text: str,
                         local_messages: list = None) -> list:
-        """Recent message window + new user message. No full transcript."""
         messages = []
-
-        # Try Supabase first, fall back to local SQLite messages
         if self.supabase and self.supabase.available:
             recent = self.supabase.get_recent_messages(
                 str(conversation_id), limit=RECENT_WINDOW
             )
             for m in recent:
-                messages.append({
-                    "role": m.get("role", "user"),
-                    "content": m.get("content", ""),
-                })
+                messages.append({"role": m.get("role", "user"),
+                                 "content": m.get("content", "")})
         elif local_messages:
             for m in local_messages[-RECENT_WINDOW:]:
-                messages.append({
-                    "role": m.get("role", "user"),
-                    "content": m.get("content", ""),
-                })
-
+                messages.append({"role": m.get("role", "user"),
+                                 "content": m.get("content", "")})
         messages.append({"role": "user", "content": new_text})
         return messages
 
-    # ── Supabase State Reads ──────────────────────────────────
+    # ── Supabase Reads ────────────────────────────────────────
 
-    def _get_summary(self, conversation_id: int) -> str:
+    def _get_summary(self, cid: int) -> str:
         if not self.supabase or not self.supabase.available:
             return ""
         try:
-            conv = self.supabase.get_conversation(str(conversation_id))
+            conv = self.supabase.get_conversation(str(cid))
             return (conv or {}).get("summary", "") or ""
         except Exception:
             return ""
 
-    def _get_goals(self, user_id: str) -> list:
+    def _get_goals(self, uid: str) -> list:
         if not self.supabase or not self.supabase.available:
             return []
         try:
-            return self.supabase.get_goals(user_id)
+            return self.supabase.get_goals(uid)
         except Exception:
             return []
 
-    def _get_beliefs(self, user_id: str) -> list:
+    def _get_beliefs(self, uid: str) -> list:
         if not self.supabase or not self.supabase.available:
             return []
         try:
-            return self.supabase.get_beliefs(user_id)
+            return self.supabase.get_beliefs(uid)
         except Exception:
             return []
 
-    def _get_memories(self, user_id: str, conversation_id: int) -> list:
+    def _get_memories(self, uid: str, cid: int) -> list:
         if not self.supabase or not self.supabase.available:
             return []
         try:
-            return self.supabase.get_memories(user_id, limit=6)
+            return self.supabase.get_memories(uid, limit=6)
         except Exception:
             return []
 
-    # ── Supabase State Writes ─────────────────────────────────
+    # ── Supabase Writes ───────────────────────────────────────
 
-    def _persist_turn(self, conversation_id: int, user_id: str,
-                      user_text: str, assistant_text: str):
-        """Mirror the turn to Supabase."""
+    def _persist_turn(self, cid: int, uid: str, user_text: str,
+                      assistant_text: str):
         if not self.supabase or not self.supabase.available:
             return
-        cid = str(conversation_id)
-        self.supabase.add_message(cid, "user", user_text)
-        self.supabase.add_message(cid, "assistant", assistant_text)
+        c = str(cid)
+        self.supabase.add_message(c, "user", user_text)
+        self.supabase.add_message(c, "assistant", assistant_text)
 
-    def _maybe_update_summary(self, conversation_id: int, user_id: str):
-        """Periodically regenerate conversation summary (every N turns)."""
-        if not self.supabase or not self.supabase.available:
+    def _maybe_update_summary(self, cid: int, uid: str):
+        if not self.supabase or not self.supabase.available or not self._client:
             return
-        if not self._client:
-            return
-
-        cid = str(conversation_id)
-        count = self.supabase.get_message_count(cid)
+        c = str(cid)
+        count = self.supabase.get_message_count(c)
         if count < SUMMARY_INTERVAL:
             return
-
-        # Check if summary is stale
-        conv = self.supabase.get_conversation(cid)
+        conv = self.supabase.get_conversation(c)
         if not conv:
             return
         existing = conv.get("summary", "") or ""
-        # Simple heuristic: update if summary is short relative to message count
         if len(existing) > 50 and count < (SUMMARY_INTERVAL * 2):
             return
-
-        recent = self.supabase.get_recent_messages(cid, limit=20)
+        recent = self.supabase.get_recent_messages(c, limit=20)
         if not recent:
             return
-
-        # Use cheapest model for summary generation
         transcript = "\n".join(
-            f"{m.get('role','?')}: {m.get('content','')[:200]}"
-            for m in recent
+            f"{m.get('role','?')}: {m.get('content','')[:200]}" for m in recent
         )
         try:
             resp = self._client.messages.create(
@@ -301,46 +371,43 @@ class OnyxRuntime:
             )
             summary = resp.content[0].text if resp.content else ""
             if summary:
-                self.supabase.update_conversation(cid, summary=summary)
-                logger.info(f"Summary updated for conv {cid}")
+                self.supabase.update_conversation(c, summary=summary)
+                logger.info(f"Summary updated for conv {c}")
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")
 
-    # ── State Accessors (for inspector panel) ─────────────────
+    # ── State Accessors (inspector) ───────────────────────────
 
     def get_agent_state(self) -> dict:
         return {
-            "status": self.status,
-            "status_detail": self.status_detail,
-            "model": self._model,
-            "runtime": "supabase+anthropic",
+            "status": self.status, "status_detail": self.status_detail,
+            "model": self._model, "runtime": "supabase+anthropic",
             "name": "ONYX",
         }
 
-    def get_conversation_summary(self, conversation_id: int) -> str:
-        return self._get_summary(conversation_id)
+    def get_conversation_summary(self, cid: int) -> str:
+        return self._get_summary(cid)
 
-    def get_goals(self, user_id: str = "local") -> list:
-        return self._get_goals(user_id)
+    def get_goals(self, uid: str = "local") -> list:
+        return self._get_goals(uid)
 
-    def get_beliefs(self, user_id: str = "local") -> list:
-        return self._get_beliefs(user_id)
+    def get_beliefs(self, uid: str = "local") -> list:
+        return self._get_beliefs(uid)
 
-    def get_memories(self, user_id: str = "local", limit: int = 10) -> list:
-        return self._get_memories(user_id, 0)
+    def get_memories(self, uid: str = "local", limit: int = 10) -> list:
+        return self._get_memories(uid, 0)
 
-    def get_tasks(self, user_id: str = "local") -> list:
+    def get_tasks(self, uid: str = "local") -> list:
         if self.supabase and self.supabase.available:
-            return self.supabase.get_tasks(user_id)
+            return self.supabase.get_tasks(uid)
         return []
 
-    def get_events(self, user_id: str = "local", limit: int = 50) -> list:
+    def get_events(self, uid: str = "local", limit: int = 50) -> list:
         if self.supabase and self.supabase.available:
-            return self.supabase.get_events(user_id, limit)
+            return self.supabase.get_events(uid, limit)
         return []
 
-    def get_files(self, user_id: str = "local",
-                  conversation_id: str = None) -> list:
+    def get_files(self, uid: str = "local", conversation_id: str = None) -> list:
         if self.supabase and self.supabase.available:
-            return self.supabase.get_files(user_id, conversation_id)
+            return self.supabase.get_files(uid, conversation_id)
         return []
