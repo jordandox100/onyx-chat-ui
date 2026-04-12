@@ -64,9 +64,8 @@ class LettaBridge:
         ERROR = "ERROR"
         AGENT_READY = "AGENT_READY"
 
-    def __init__(self, supabase=None, storage=None):
+    def __init__(self, supabase=None):
         self.supabase = supabase
-        self.storage = storage  # local SQLite for fallback display
         self._client: Optional[Letta] = None
         self._agent_id: Optional[str] = None
         self._status = self.Status.NOT_CONFIGURED
@@ -181,24 +180,16 @@ class LettaBridge:
         return self._create_agent()
 
     def _create_agent(self) -> bool:
-        """Create a fresh ONYX agent on the Letta server."""
+        """Create a fresh ONYX agent on the Letta server.
+        Uses hardcoded seed defaults. After creation, Letta owns the memory."""
         try:
-            persona_text = ONYX_PERSONA
-            human_text = ONYX_HUMAN
-
-            # Load custom personality from local config if available
-            if self.storage:
-                custom = self.storage.get_personality()
-                if custom and "ONYX" in custom:
-                    persona_text = custom
-
             agent = self._client.agents.create(
                 name="ONYX",
                 model=self._model,
                 embedding=DEFAULT_EMBEDDING,
                 memory_blocks=[
-                    {"label": "persona", "value": persona_text},
-                    {"label": "human", "value": human_text},
+                    {"label": "persona", "value": ONYX_PERSONA},
+                    {"label": "human", "value": ONYX_HUMAN},
                 ],
                 include_base_tools=True,
             )

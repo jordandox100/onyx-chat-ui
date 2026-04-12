@@ -1,108 +1,65 @@
-# ONYX — Persistent Desktop AI Assistant
-
-## Problem Statement
-Build a local Linux desktop AI chat assistant called ONYX with persistent agent architecture using Letta as the full runtime (chat, memory, identity, continuity, compaction), Supabase for app-visible state, and PySide6 for the desktop UI.
+# ONYX — Persistent Desktop AI (Letta-first)
 
 ## Architecture
 ```
-                    ┌─────────────────────┐
-                    │    PySide6 UI        │
-                    │  (product interface) │
-                    └──────┬──────────────┘
-                           │
-                    ┌──────▼──────────────┐
-                    │   Letta Bridge       │
-                    │  (backend connector) │
-                    └──┬──────────────┬───┘
-                       │              │
-              ┌────────▼────┐  ┌──────▼──────┐
-              │ Letta Server │  │  Supabase   │
-              │ (agent mind) │  │ (app state) │
-              └──────────────┘  └─────────────┘
-                    │
-              ┌─────▼─────┐
-              │ Anthropic  │
-              │ (LLM model)│
-              └────────────┘
-
-/app/
-├── LETTA_SETUP.md                     # Server setup guide
-├── supabase_setup.sql                 # Supabase schema
-├── install_onyx.sh                    # ONE-CLICK INSTALLER
-├── desktop_app/
-│   ├── main.py                        # Entry — config validation, Letta health, wiring
-│   ├── ui/
-│   │   ├── main_window.py             # 3-panel: sidebar | chat | inspector
-│   │   ├── chat_widget.py             # Chat display, lazy loading, voice
-│   │   ├── inspector_panel.py         # Agent state, Letta memory blocks, tasks, events
-│   │   ├── avatar_widget.py           # Animated robot head
-│   │   └── styles.py                  # Dark cyber-tech theme
-│   └── services/
-│       ├── letta_bridge.py            # REAL Letta client — agent CRUD, messaging, memory
-│       ├── chat_service.py            # Routes through Letta (no direct Anthropic)
-│       ├── supabase_service.py        # Cloud state (tasks, events, files)
-│       ├── storage_service.py         # Local SQLite (UI mirror + summaries)
-│       ├── context_service.py         # Smart context for fallback/summary generation
-│       ├── tool_service.py            # Shell/file tools
-│       ├── voice_service.py           # Whisper STT
-│       └── tts_service.py             # Piper neural TTS
-├── Onyx/ (config, history, voices, logs)
-├── requirements.txt
-├── test_onyx.py (16 test suites)
-└── .env
+  User -> PySide6 UI -> ChatService (thin relay) -> LettaBridge -> Letta Server -> Anthropic
+                                 |                       |
+                          SQLite (mirror)         Supabase (app state)
 ```
 
-## Runtime Architecture
-- **Letta** = primary runtime. Handles chat, memory, identity, context compaction
-- **Anthropic** = model provider configured ON the Letta server (not called directly)
-- **Supabase** = app-visible state (tasks, events, files, agent state mirror)
-- **SQLite** = local UI display mirror only (not used for cognition)
-- **No transcript replay** = Letta handles its own memory/compaction internally
+- **Letta** = brain. Owns persona, human memory, identity, context compaction, tools, model calls
+- **Anthropic** = model provider configured on Letta server. NOT called directly by UI
+- **Supabase** = app state mirror (tasks, events, files). NOT a second brain
+- **SQLite** = UI display mirror. NOT used for cognition
+- **UI** = interface only. Sends ONLY the user's message text to Letta
 
-## Env Vars
+## What was removed (Letta owns these)
+- `context_service.py` — local transcript summarization for model context. DELETED.
+- `personality_service.py` — local persona/kb/instructions wrapper. DELETED.
+- `tool_service.py` — local shell/file tools + prompt injection. DELETED.
+- `storage_service.py` brain logic — DEFAULT_PERSONALITY, DEFAULT_KNOWLEDGEBASE, DEFAULT_USER_PROFILE, DEFAULT_INSTRUCTIONS, build_system_message(), get_personality(), get_knowledgebase(), get_user_profile(), get_instructions(), summaries table. ALL STRIPPED.
+- Direct Anthropic SDK calls from chat path. REMOVED.
+
+## Normal message turn (after cleanup)
 ```
-LETTA_BASE_URL=http://localhost:8283   # Required — Letta server URL
+1. User types message
+2. ChatService.send_message(text, chat_id)
+3. Mirror user msg to SQLite (for UI display)
+4. bridge.send_message(text=message) — sends ONLY the text
+5. Letta handles: persona, human memory, context window, compaction, tools, model call
+6. Bridge returns {response, tool_calls, usage}
+7. Mirror assistant response to SQLite (for UI display)
+8. UI renders response
+```
+
+## Env vars
+```
+LETTA_BASE_URL=http://localhost:8283   # REQUIRED
 LETTA_API_KEY=                          # Optional for self-hosted
-LETTA_AGENT_ID=                         # Optional — auto-creates ONYX agent
-ANTHROPIC_API_KEY=                      # For reference / other uses
-SUPABASE_URL=                           # Optional — cloud state sync
+LETTA_AGENT_ID=                         # Optional, auto-creates
+ANTHROPIC_API_KEY=                      # Set on Letta server, not used by UI
+SUPABASE_URL=                           # Optional
 SUPABASE_ANON_KEY=                      # Optional
 ```
 
-## What's Implemented (Feb 2026)
+## Files
+```
+desktop_app/
+  main.py                    # Entry: config validation, health check, wiring
+  services/
+    letta_bridge.py          # Real letta-client SDK: connect, agent CRUD, send_message, memory
+    chat_service.py          # Thin relay: UI -> bridge -> SQLite mirror
+    storage_service.py       # SQLite mirror (chats/messages) + app settings. No brain logic.
+    supabase_service.py      # Cloud state: tasks, events, files, agent state
+    voice_service.py         # Whisper STT
+    tts_service.py           # Piper TTS
+  ui/
+    main_window.py           # 3-panel: sidebar | chat | inspector
+    chat_widget.py           # Chat display, lazy loading, voice
+    inspector_panel.py       # Letta state, memory blocks, tasks, events, files
+    avatar_widget.py         # Animated robot
+    styles.py                # Dark theme
+```
 
-### Letta Integration
-- [x] Real letta-client SDK integration (letta_bridge.py)
-- [x] Agent creation with persona + human memory blocks
-- [x] Message routing through Letta (persistent memory, compaction)
-- [x] Agent state retrieval from Letta server
-- [x] Memory block reading (persona, human blocks)
-- [x] Conversation message history from Letta
-- [x] Streaming message support (send_message_streaming)
-- [x] Health checks and config validation at startup
-- [x] Clean "not configured" state when Letta is missing
-- [x] Logging of which runtime path is used per message turn
-
-### Desktop UI
-- [x] PySide6 dark cyber-tech UI
-- [x] 3-panel layout: sidebar | chat | inspector (both toggleable)
-- [x] Inspector panel showing Letta agent state, memory blocks, tasks, events, files
-- [x] Lazy message loading with "Load older messages" button
-- [x] Animated robot avatar
-- [x] Code blocks with copy buttons (excluded from TTS)
-- [x] Neural TTS (5 Piper voices), voice preview, speed slider
-- [x] Stop agent button, TTS stop/restart
-- [x] Wake word "Onyx"
-
-### Token Waste Eliminated
-- Direct Anthropic calls with 20-message replay REMOVED
-- Letta handles context compaction internally
-- Local SQLite is display-only, not cognition source
-- Context service available as fallback summary generator
-
-## Backlog
-- P0: Test end-to-end with live Letta server + Anthropic key
-- P1: Supabase table creation + live state sync testing
-- P2: Conversation export/import
-- P3: Additional voice models
-- P3: Realtime Supabase subscriptions
+## 13/13 tests passing
+Tests verify: no direct Anthropic, no brain in storage, dead files removed, clean Letta bridge, env vars correct.

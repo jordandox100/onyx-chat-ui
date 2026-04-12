@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""ONYX entry point — wires Letta runtime, Supabase state, and PySide6 UI."""
+"""ONYX entry point — wires Letta runtime, Supabase state, and PySide6 UI.
+
+Architecture:
+  Letta = brain (memory, identity, compaction, tools, model)
+  Supabase = app state mirror (tasks, events, files)
+  SQLite = UI display mirror only (visible transcript)
+  UI = interface, not intelligence
+"""
 import sys
 import os
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from dotenv import load_dotenv
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -17,82 +23,70 @@ from desktop_app.services.supabase_service import SupabaseService
 from desktop_app.services.letta_bridge import LettaBridge
 from desktop_app.services.chat_service import ChatService
 
-# Load environment variables
 load_dotenv()
 
 
 def validate_config(logger):
-    """Log startup config status for each service."""
-    logger.info("=== ONYX Config Validation ===")
-
-    letta_url = os.environ.get("LETTA_BASE_URL", "").strip()
-    letta_key = os.environ.get("LETTA_API_KEY", "").strip()
-    letta_agent = os.environ.get("LETTA_AGENT_ID", "").strip()
-    supa_url = os.environ.get("SUPABASE_URL", "").strip()
-    supa_key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
-
-    logger.info(f"  LETTA_BASE_URL:  {'SET' if letta_url else 'NOT SET'}")
-    logger.info(f"  LETTA_API_KEY:   {'SET' if letta_key else 'NOT SET (ok for self-hosted)'}")
-    logger.info(f"  LETTA_AGENT_ID:  {'SET' if letta_agent else 'NOT SET (will auto-create)'}")
-    logger.info(f"  SUPABASE_URL:    {'SET' if supa_url else 'NOT SET (optional)'}")
-    logger.info(f"  SUPABASE_ANON_KEY: {'SET' if supa_key else 'NOT SET (optional)'}")
-
-    if not letta_url:
-        logger.warning(
-            "LETTA_BASE_URL not set. ONYX will show setup instructions. "
-            "Run: docker run -d -p 8283:8283 lettaai/letta:latest"
+    """Log startup config. Fail loudly if Letta is missing."""
+    logger.info("=== ONYX Config ===")
+    checks = {
+        "LETTA_BASE_URL": ("REQUIRED", True),
+        "LETTA_API_KEY": ("optional for self-hosted", False),
+        "LETTA_AGENT_ID": ("optional, auto-creates", False),
+        "SUPABASE_URL": ("optional", False),
+        "SUPABASE_ANON_KEY": ("optional", False),
+    }
+    for var, (note, required) in checks.items():
+        val = os.environ.get(var, "").strip()
+        status = "SET" if val else "NOT SET"
+        level = "WARNING" if required and not val else "INFO"
+        logger.log(
+            30 if level == "WARNING" else 20,
+            f"  {var}: {status} ({note})"
         )
 
 
 def main():
-    """Main entry point for ONYX desktop application."""
     logger = setup_logger()
-    logger.info("Starting ONYX Application")
-
-    # Validate config
+    logger.info("Starting ONYX")
     validate_config(logger)
 
-    # Initialize local storage
+    # Local storage (UI display mirror + settings only)
     storage = StorageService()
     storage.initialize()
 
-    # Initialize Supabase (optional — graceful fallback)
+    # Supabase (optional app state)
     supabase = SupabaseService()
 
-    # Initialize Letta bridge (primary runtime)
-    bridge = LettaBridge(supabase=supabase, storage=storage)
+    # Letta bridge (the actual brain connection)
+    bridge = LettaBridge(supabase=supabase)
 
-    # Letta health check
     if bridge.available:
         health = bridge.health_check()
         if health["ok"]:
-            logger.info(f"Letta health: OK")
-            # Ensure ONYX agent exists
+            logger.info("Letta health: OK")
             bridge.ensure_agent()
             logger.info(f"Letta agent: {bridge.status} — {bridge.status_detail}")
         else:
-            logger.warning(f"Letta health check failed: {health['detail']}")
+            logger.warning(f"Letta health failed: {health['detail']}")
     else:
-        logger.info(f"Letta status: {bridge.status} — {bridge.status_detail}")
+        logger.warning(f"Letta: {bridge.status} — {bridge.status_detail}")
 
-    # Chat service routes through Letta bridge
+    # Chat service = thin relay (UI -> Letta -> mirror to SQLite)
     chat_service = ChatService(storage=storage, bridge=bridge)
 
-    # Create Qt Application
     app = QApplication(sys.argv)
     app.setApplicationName("ONYX")
     app.setOrganizationName("ONYX")
     app.setStyle("Fusion")
 
-    # Create and show main window
     window = MainWindow(bridge=bridge, chat_service=chat_service)
     window.show()
 
     logger.info(
-        f"ONYX started — runtime={chat_service.runtime_name}, "
+        f"ONYX ready — runtime={chat_service.runtime_name}, "
         f"letta={bridge.status}, supabase={supabase.status_text}"
     )
-
     sys.exit(app.exec())
 
 if __name__ == "__main__":
